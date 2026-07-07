@@ -1,0 +1,35 @@
+name: Docker Deploy
+
+# Runs after "Docker Publish" succeeds on main (so the new image exists in GHCR),
+# or on demand. SSHes into the prod server and rolls the container.
+on:
+  workflow_run:
+    workflows: ["Docker Publish"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Deploy to server
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VM_SERVER_IP }}
+          username: root
+          key: ${{ secrets.VM_SSH_PRIVATE_KEY }}
+          script: |
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            docker pull ghcr.io/${{ github.repository_owner }}/geocatchatbot:latest
+            docker rm -f geocat || true
+            docker run -d -p 127.0.0.1:8883:8080 \
+              --env-file ~/ENV_FILES/geocat.env \
+              --restart unless-stopped \
+              --name geocat \
+              ghcr.io/${{ github.repository_owner }}/geocatchatbot:latest

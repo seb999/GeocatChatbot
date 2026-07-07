@@ -1,4 +1,7 @@
 import express from 'express';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { existsSync } from 'node:fs';
 import { config } from './config.js';
 import { McpSession } from './mcp/client.js';
 import { isWriteTool } from './mcp/writeTools.js';
@@ -59,8 +62,24 @@ app.get('/api/mcp-tools', requireAuth, async (_req, res) => {
   }
 });
 
+// In production the built frontend is served from the same origin (Docker copies
+// it to ./public). In dev, Vite serves the UI and proxies /api here, so this is skipped.
+const publicDir = process.env.PUBLIC_DIR ?? join(dirname(fileURLToPath(import.meta.url)), '..', 'public');
+if (existsSync(publicDir)) {
+  app.use(express.static(publicDir));
+  // SPA fallback: any non-/api GET returns index.html.
+  app.use((req, res, next) => {
+    if (req.method === 'GET' && !req.path.startsWith('/api/')) {
+      res.sendFile(join(publicDir, 'index.html'));
+    } else {
+      next();
+    }
+  });
+}
+
 app.listen(config.port, () => {
   console.log(`[geocat] backend on http://localhost:${config.port}`);
   console.log(`[geocat] MCP → ${config.mcpUrl}`);
+  if (existsSync(publicDir)) console.log(`[geocat] serving frontend from ${publicDir}`);
   warnIfOpen();
 });

@@ -1,0 +1,23 @@
+# deps & build output (reinstalled/rebuilt inside the image)
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+
+# secrets — never send to the build context
+**/.env
+**/.env.local
+**/.env.*.local
+
+# vcs / ci / editor
+.git
+.github
+.vscode
+
+# docs & planning (not needed in the image)
+dev-plan
+*.md
+
+# logs & os cruft
+**/*.log
+**/audit.log
+**/.DS_Store
