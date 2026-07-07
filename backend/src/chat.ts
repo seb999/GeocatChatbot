@@ -171,7 +171,8 @@ export async function chatHandler(req: Request, res: Response): Promise<void> {
       // Execute every pending tool: reads auto, writes per decision.
       const results: ToolResultBlockParam[] = [];
       for (const u of uses) {
-        if (isWriteTool(u.name)) {
+        const write = isWriteTool(u.name);
+        if (write) {
           const d = decisions.get(u.id)!;
           if (!d.approve) {
             await audit({ event: 'write_declined', tool: u.name, input: u.input });
@@ -183,15 +184,13 @@ export async function chatHandler(req: Request, res: Response): Promise<void> {
             });
             continue;
           }
-          send({ type: 'tool_call', name: u.name, label: labelFor(u.name) });
-          const content = await callTool(mcp, u);
-          await audit({ event: 'write_executed', tool: u.name, input: u.input });
-          results.push({ type: 'tool_result', tool_use_id: u.id, content });
-        } else {
-          send({ type: 'tool_call', name: u.name, label: labelFor(u.name) });
-          const content = await callTool(mcp, u);
-          results.push({ type: 'tool_result', tool_use_id: u.id, content });
         }
+        // Announce the call with its arguments, run it, then send a result preview.
+        send({ type: 'tool_call', id: u.id, name: u.name, label: labelFor(u.name), input: u.input });
+        const content = await callTool(mcp, u);
+        if (write) await audit({ event: 'write_executed', tool: u.name, input: u.input });
+        send({ type: 'tool_result', id: u.id, name: u.name, preview: truncate(content, 1500) });
+        results.push({ type: 'tool_result', tool_use_id: u.id, content });
       }
       messages.push({ role: 'user', content: results });
       decisions.clear(); // consumed; further writes need fresh confirmation
@@ -226,4 +225,8 @@ async function callTool(mcp: McpSession | null, u: ToolUseBlock): Promise<string
 
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+function truncate(s: string, n: number): string {
+  return s.length <= n ? s : s.slice(0, n) + '\n… (truncated)';
 }

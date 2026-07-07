@@ -1,10 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAuth } from './auth';
 
+interface ToolActivity {
+  id: string;
+  name: string;
+  label: string;
+  input?: unknown;
+  result?: string;
+}
+
 interface Message {
   role: 'user' | 'assistant';
   content: string;
-  toolCalls?: string[];
+  toolCalls?: ToolActivity[];
   notices?: string[];
 }
 
@@ -58,6 +66,57 @@ function Badge({ label, muted }: { label: string; muted?: boolean }) {
   );
 }
 
+const preStyle: React.CSSProperties = {
+  overflowX: 'auto',
+  margin: 0,
+  padding: '8px 10px',
+  borderRadius: 8,
+  background: '#0e1420',
+  color: '#dbe4f0',
+  fontSize: 11.5,
+  fontFamily: "'SF Mono','Menlo',monospace",
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
+};
+
+function prettyJson(s: string): string {
+  try {
+    return JSON.stringify(JSON.parse(s), null, 2);
+  } catch {
+    return s;
+  }
+}
+
+function ToolRow({ activity }: { activity: ToolActivity }) {
+  const [open, setOpen] = useState(false);
+  const running = activity.result === undefined;
+  return (
+    <div style={{ border: '1px solid var(--clr-border)', borderRadius: 10, background: 'var(--clr-surface)', overflow: 'hidden' }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left' }}
+      >
+        <span className={running ? 'chat-dot-pulse' : undefined} style={{ width: 6, height: 6, borderRadius: 999, background: running ? 'var(--clr-primary)' : '#9fb0c6' }} />
+        <span style={{ fontSize: 12, color: 'var(--clr-muted)' }}>{activity.label}</span>
+        <code style={{ fontSize: 11, color: 'var(--clr-text)' }}>{activity.name}</code>
+        <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--clr-muted)' }}>{open ? '▲ hide' : '▼ details'}</span>
+      </button>
+      {open && (
+        <div style={{ padding: '0 10px 10px' }}>
+          <div style={{ fontSize: 10, color: 'var(--clr-muted)', margin: '2px 0 3px' }}>arguments</div>
+          <pre style={preStyle}>{JSON.stringify(activity.input ?? {}, null, 2)}</pre>
+          {activity.result !== undefined && (
+            <>
+              <div style={{ fontSize: 10, color: 'var(--clr-muted)', margin: '8px 0 3px' }}>result</div>
+              <pre style={preStyle}>{prettyJson(activity.result)}</pre>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Bubble({ msg }: { msg: Message }) {
   if (msg.role === 'user') {
     return (
@@ -71,10 +130,14 @@ function Bubble({ msg }: { msg: Message }) {
   const segments = msg.content ? parseContent(msg.content) : [];
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      {(msg.toolCalls?.length || msg.notices?.length) && (
+      {msg.toolCalls && msg.toolCalls.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {msg.toolCalls.map((t) => <ToolRow key={t.id} activity={t} />)}
+        </div>
+      )}
+      {msg.notices && msg.notices.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          {msg.toolCalls?.map((t, i) => <Badge key={`t${i}`} label={t} />)}
-          {msg.notices?.map((n, i) => <Badge key={`n${i}`} label={n} muted />)}
+          {msg.notices.map((n, i) => <Badge key={`n${i}`} label={n} muted />)}
         </div>
       )}
       {segments.map((seg, i) =>
@@ -234,7 +297,21 @@ export default function App() {
             patchLast((m) => ({ ...m, content: m.content + (ev.text as string) }));
             break;
           case 'tool_call':
-            patchLast((m) => ({ ...m, toolCalls: [...(m.toolCalls ?? []), ev.label as string] }));
+            patchLast((m) => ({
+              ...m,
+              toolCalls: [
+                ...(m.toolCalls ?? []),
+                { id: ev.id as string, name: ev.name as string, label: ev.label as string, input: ev.input },
+              ],
+            }));
+            break;
+          case 'tool_result':
+            patchLast((m) => ({
+              ...m,
+              toolCalls: (m.toolCalls ?? []).map((t) =>
+                t.id === (ev.id as string) ? { ...t, result: ev.preview as string } : t,
+              ),
+            }));
             break;
           case 'notice':
             patchLast((m) => ({ ...m, notices: [...(m.notices ?? []), ev.message as string] }));
