@@ -6,6 +6,7 @@ import { config } from './config.js';
 import { McpSession } from './mcp/client.js';
 import { isWriteTool } from './mcp/writeTools.js';
 import { chatHandler } from './chat.js';
+import { catalog } from './providers/index.js';
 import { requireAuth, warnIfOpen, type AuthedUser } from './auth.js';
 
 const app = express();
@@ -15,10 +16,20 @@ app.use(express.json({ limit: '5mb' }));
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
-    model: config.anthropicModel,
+    defaultProvider: config.defaultProvider,
     anthropicKeyConfigured: Boolean(config.anthropicApiKey),
+    openaiKeyConfigured: Boolean(config.openaiApiKey),
     authConfigured: Boolean(config.firebaseProjectId),
     mcpUrl: config.mcpUrl,
+  });
+});
+
+/** Provider + model catalog for the UI pickers, tagging configured providers. */
+app.get('/api/models', requireAuth, (_req, res) => {
+  res.json({
+    ...catalog(),
+    defaultProvider: config.defaultProvider,
+    defaultModel: config.defaultProvider === 'openai' ? config.openaiModel : config.anthropicModel,
   });
 });
 

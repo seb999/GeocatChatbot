@@ -23,6 +23,23 @@ interface PendingTool {
   input: unknown;
 }
 
+interface ModelDef {
+  id: string;
+  label: string;
+}
+
+interface ProviderCat {
+  id: string;
+  label: string;
+  configured: boolean;
+  models: ModelDef[];
+}
+
+interface BillingInfo {
+  provider: string;
+  label: string;
+}
+
 type Segment = { type: 'text'; text: string } | { type: 'code'; code: string };
 
 function parseContent(content: string): Segment[] {
@@ -65,6 +82,18 @@ function Badge({ label, muted }: { label: string; muted?: boolean }) {
     </span>
   );
 }
+
+const selectStyle: React.CSSProperties = {
+  borderRadius: 8,
+  border: '1px solid var(--clr-border)',
+  background: 'var(--clr-surface)',
+  color: 'var(--clr-text)',
+  padding: '4px 6px',
+  fontSize: 12,
+  fontFamily: 'inherit',
+  cursor: 'pointer',
+  maxWidth: 150,
+};
 
 const preStyle: React.CSSProperties = {
   overflowX: 'auto',
@@ -155,7 +184,13 @@ function Bubble({ msg }: { msg: Message }) {
   );
 }
 
-function InsertCoinCard({ onDismiss }: { onDismiss: () => void }) {
+const BILLING_URL: Record<string, string> = {
+  anthropic: 'https://console.anthropic.com/settings/billing',
+  openai: 'https://platform.openai.com/settings/organization/billing',
+};
+
+function InsertCoinCard({ info, onDismiss }: { info: BillingInfo; onDismiss: () => void }) {
+  const label = info.label || 'provider';
   return (
     <div
       style={{
@@ -173,12 +208,12 @@ function InsertCoinCard({ onDismiss }: { onDismiss: () => void }) {
         INSERT COIN TO CONTINUE
       </div>
       <p style={{ fontSize: 12, color: '#9fb0c6', margin: '12px 0 16px', fontFamily: 'inherit', lineHeight: 1.5 }}>
-        The Anthropic credit balance is empty, so the assistant can't reply.
+        The {label} credit balance is empty, so the assistant can't reply.
         Add credit, then try your message again.
       </p>
       <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
         <a
-          href="https://console.anthropic.com/settings/billing"
+          href={BILLING_URL[info.provider] ?? BILLING_URL.anthropic}
           target="_blank"
           rel="noreferrer"
           style={{ padding: '8px 16px', borderRadius: 8, background: '#f5c518', color: '#0e1420', fontSize: 13, fontWeight: 700, textDecoration: 'none' }}
@@ -231,7 +266,10 @@ export default function App() {
   const [pending, setPending] = useState<PendingTool[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('');
-  const [outOfCredit, setOutOfCredit] = useState(false);
+  const [billing, setBilling] = useState<BillingInfo | null>(null);
+  const [providers, setProviders] = useState<ProviderCat[]>([]);
+  const [provider, setProvider] = useState('');
+  const [model, setModel] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
   // Latest history is captured via a ref so resume uses the freshest value.
   const historyRef = useRef<unknown[]>([]);
@@ -251,8 +289,41 @@ export default function App() {
       .then((r) => r.json())
       .then((d) => setStatus(d.connected ? `Catalogue connected — ${d.count} tools` : 'Catalogue tools unavailable'))
       .catch(() => setStatus('Catalogue tools unavailable'));
+    authFetch('/api/models')
+      .then((r) => r.json())
+      .then((d) => {
+        setProviders(d.providers ?? []);
+        setProvider(d.defaultProvider ?? d.providers?.[0]?.id ?? '');
+        setModel(d.defaultModel ?? '');
+      })
+      .catch(() => {
+        /* pickers stay empty; chat falls back to the server default */
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const currentModels = providers.find((p) => p.id === provider)?.models ?? [];
+
+  /** Switch model within the same provider — history stays compatible. */
+  function changeModel(next: string) {
+    if (next === model) return;
+    setModel(next);
+  }
+
+  /** Switch provider — message formats differ, so start a fresh conversation. */
+  function changeProvider(next: string) {
+    if (next === provider) return;
+    const p = providers.find((x) => x.id === next);
+    if (!p || !p.configured) return;
+    if (messages.length > 0 && !window.confirm('Switching provider starts a new conversation. Continue?')) return;
+    setProvider(next);
+    setModel(p.models[0]?.id ?? '');
+    setMessages([]);
+    setHistory([]);
+    historyRef.current = [];
+    setPending(null);
+    setBilling(null);
+  }
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -269,7 +340,7 @@ export default function App() {
     const res = await authFetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...(body as object), provider, model }),
     });
     if (!res.ok || !res.body) {
       patchLast((m) => ({ ...m, content: m.content + `\n[Error ${res.status}: ${res.statusText}]` }));
@@ -320,7 +391,7 @@ export default function App() {
             setPending(ev.tools as PendingTool[]);
             break;
           case 'billing':
-            setOutOfCredit(true);
+            setBilling({ provider: (ev.provider as string) ?? provider, label: (ev.label as string) ?? '' });
             break;
           case 'history':
             setHistory(ev.messages as unknown[]);
@@ -338,7 +409,7 @@ export default function App() {
     const text = input.trim();
     if (!text || loading || pending) return;
     setInput('');
-    setOutOfCredit(false);
+    setBilling(null);
     setMessages((prev) => [...prev, { role: 'user', content: text }, { role: 'assistant', content: '', toolCalls: [], notices: [] }]);
     setLoading(true);
     try {
@@ -376,6 +447,37 @@ export default function App() {
             Search, explore &amp; edit the EEA metadata catalogue · {status || 'connecting…'}
           </p>
         </div>
+        {providers.length > 0 && (
+          <div style={{ display: 'flex', gap: 6 }}>
+            <select
+              value={provider}
+              onChange={(e) => changeProvider(e.target.value)}
+              disabled={loading || !!pending}
+              title="Model provider"
+              style={selectStyle}
+            >
+              {providers.map((p) => (
+                <option key={p.id} value={p.id} disabled={!p.configured}>
+                  {p.label}
+                  {p.configured ? '' : ' (no key)'}
+                </option>
+              ))}
+            </select>
+            <select
+              value={model}
+              onChange={(e) => changeModel(e.target.value)}
+              disabled={loading || !!pending}
+              title="Model"
+              style={selectStyle}
+            >
+              {currentModels.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         <div style={{ textAlign: 'right' }}>
           <div style={{ fontSize: 12, color: 'var(--clr-muted)', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {user?.email}
@@ -401,7 +503,7 @@ export default function App() {
           <Bubble key={i} msg={msg} />
         ))}
         {pending && <ConfirmCard tools={pending} onDecide={decide} busy={loading} />}
-        {outOfCredit && <InsertCoinCard onDismiss={() => setOutOfCredit(false)} />}
+        {billing && <InsertCoinCard info={billing} onDismiss={() => setBilling(null)} />}
         {showTyping && (
           <div style={{ display: 'flex', gap: 4, paddingLeft: 4 }}>
             {[0, 1, 2].map((i) => (

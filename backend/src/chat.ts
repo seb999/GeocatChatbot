@@ -1,16 +1,10 @@
 import type { Request, Response } from 'express';
 import { appendFile } from 'node:fs/promises';
-import Anthropic from '@anthropic-ai/sdk';
-import type {
-  MessageParam,
-  Tool,
-  ToolUseBlock,
-  ToolResultBlockParam,
-  ContentBlockParam,
-} from '@anthropic-ai/sdk/resources/messages';
 import { config } from './config.js';
-import { McpSession, type McpToolDef } from './mcp/client.js';
+import { McpSession } from './mcp/client.js';
 import { isWriteTool } from './mcp/writeTools.js';
+import { getProvider, isValidModel, type ProviderId } from './providers/index.js';
+import { errMsg, type ToolCall, type ToolResult } from './providers/types.js';
 
 const SYSTEM_PROMPT = `You are the assistant for the EEA geospatial metadata catalogue (GeoNetwork),
 which you reach through catalogue tools.
@@ -35,8 +29,10 @@ interface Decision {
 
 interface ChatBody {
   message?: string;
-  history?: MessageParam[];
+  history?: unknown[];
   decisions?: Decision[];
+  provider?: string;
+  model?: string;
 }
 
 function labelFor(name: string): string {
@@ -63,22 +59,6 @@ function labelFor(name: string): string {
   return map[name] ?? `${name.replace(/_/g, ' ')}…`;
 }
 
-/** All MCP tools are exposed; writes are gated at runtime (not filtered out). */
-function toAnthropicTools(mcpTools: McpToolDef[]): Tool[] {
-  return mcpTools.map((t) => ({
-    name: t.name,
-    description: t.description ?? t.name,
-    input_schema: t.inputSchema as Tool['input_schema'],
-  }));
-}
-
-/** Tail assistant message that still has unanswered tool_use blocks, if any. */
-function pendingToolUses(messages: MessageParam[]): ToolUseBlock[] {
-  const last = messages[messages.length - 1];
-  if (!last || last.role !== 'assistant' || !Array.isArray(last.content)) return [];
-  return last.content.filter((b): b is ToolUseBlock => (b as { type?: string }).type === 'tool_use');
-}
-
 async function audit(entry: Record<string, unknown>): Promise<void> {
   const line = JSON.stringify({ ts: new Date().toISOString(), ...entry });
   console.log(`[audit] ${line}`);
@@ -87,6 +67,17 @@ async function audit(entry: Record<string, unknown>): Promise<void> {
   } catch {
     /* best effort */
   }
+}
+
+/** Resolve provider + model from the request, validated against the catalog. */
+function resolveModel(body: ChatBody): { providerId: ProviderId; model: string } {
+  const providerId: ProviderId =
+    body.provider === 'openai' || body.provider === 'anthropic'
+      ? body.provider
+      : config.defaultProvider;
+  const fallbackModel = providerId === 'openai' ? config.openaiModel : config.anthropicModel;
+  const model = body.model && isValidModel(providerId, body.model) ? body.model : fallbackModel;
+  return { providerId, model };
 }
 
 export async function chatHandler(req: Request, res: Response): Promise<void> {
@@ -98,18 +89,21 @@ export async function chatHandler(req: Request, res: Response): Promise<void> {
     res.end();
   };
 
-  if (!config.anthropicApiKey) {
-    send({ type: 'error', message: 'ANTHROPIC_API_KEY not configured on the server.' });
+  const body = req.body as ChatBody;
+  const { providerId, model } = resolveModel(body);
+  const provider = getProvider(providerId)!;
+
+  if (!provider.isConfigured()) {
+    send({ type: 'error', message: `${provider.label} API key not configured on the server.` });
     return finish();
   }
 
-  const body = req.body as ChatBody;
   const decisions = new Map<string, Decision>();
   for (const d of body.decisions ?? []) decisions.set(d.tool_use_id, d);
 
-  const messages: MessageParam[] = [...(body.history ?? [])];
+  const messages: unknown[] = [...(body.history ?? [])];
   if (body.message?.trim()) {
-    messages.push({ role: 'user', content: body.message.trim() });
+    messages.push(provider.userMessage(body.message.trim()));
   } else if (decisions.size === 0) {
     send({ type: 'error', message: 'Empty message.' });
     return finish();
@@ -117,42 +111,37 @@ export async function chatHandler(req: Request, res: Response): Promise<void> {
 
   // Connect to MCP (graceful degradation).
   let mcp: McpSession | null = null;
-  let tools: Tool[] = [];
+  let tools: unknown = provider.formatTools([]);
   try {
     mcp = await McpSession.connect(config.mcpUrl, config.mcpAuth || undefined);
-    tools = toAnthropicTools(await mcp.listTools());
+    tools = provider.formatTools(await mcp.listTools());
   } catch (e) {
     send({ type: 'notice', message: `Catalogue tools unavailable: ${errMsg(e)}` });
   }
 
-  const anthropic = new Anthropic({ apiKey: config.anthropicApiKey });
-
   try {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      const uses = pendingToolUses(messages);
+      const uses = provider.pendingToolCalls(messages);
 
       if (uses.length === 0) {
         // Need a model turn.
-        const stream = anthropic.messages.stream({
-          model: config.anthropicModel,
-          max_tokens: 8192,
-          thinking: { type: 'adaptive' },
+        const turn = await provider.streamTurn({
+          model,
           system: SYSTEM_PROMPT,
           tools,
           messages,
+          onText: (delta) => send({ type: 'content_delta', text: delta }),
         });
-        stream.on('text', (delta) => send({ type: 'content_delta', text: delta }));
-        const final = await stream.finalMessage();
-        messages.push({ role: 'assistant', content: final.content as ContentBlockParam[] });
+        messages.push(turn.assistantMessage);
 
-        if (final.stop_reason !== 'tool_use') {
+        if (!turn.needsTools) {
           send({ type: 'history', messages });
           break;
         }
-        continue; // next iteration resolves the tool_use blocks
+        continue; // next iteration resolves the tool calls
       }
 
-      // There are unresolved tool_use blocks. Gate on undecided writes.
+      // There are unresolved tool calls. Gate on undecided writes.
       const undecidedWrites = uses.filter((u) => isWriteTool(u.name) && !decisions.has(u.id));
       if (undecidedWrites.length > 0) {
         send({
@@ -169,7 +158,7 @@ export async function chatHandler(req: Request, res: Response): Promise<void> {
       }
 
       // Execute every pending tool: reads auto, writes per decision.
-      const results: ToolResultBlockParam[] = [];
+      const results: ToolResult[] = [];
       for (const u of uses) {
         const write = isWriteTool(u.name);
         if (write) {
@@ -177,10 +166,10 @@ export async function chatHandler(req: Request, res: Response): Promise<void> {
           if (!d.approve) {
             await audit({ event: 'write_declined', tool: u.name, input: u.input });
             results.push({
-              type: 'tool_result',
-              tool_use_id: u.id,
+              id: u.id,
+              name: u.name,
               content: `User declined this action.${d.note ? ' Note: ' + d.note : ''}`,
-              is_error: true,
+              isError: true,
             });
             continue;
           }
@@ -190,9 +179,9 @@ export async function chatHandler(req: Request, res: Response): Promise<void> {
         const content = await callTool(mcp, u);
         if (write) await audit({ event: 'write_executed', tool: u.name, input: u.input });
         send({ type: 'tool_result', id: u.id, name: u.name, preview: truncate(content, 1500) });
-        results.push({ type: 'tool_result', tool_use_id: u.id, content });
+        results.push({ id: u.id, name: u.name, content });
       }
-      messages.push({ role: 'user', content: results });
+      for (const m of provider.toolResultMessages(results)) messages.push(m);
       decisions.clear(); // consumed; further writes need fresh confirmation
 
       if (round === MAX_TOOL_ROUNDS - 1) {
@@ -201,30 +190,20 @@ export async function chatHandler(req: Request, res: Response): Promise<void> {
       }
     }
   } catch (e) {
-    if (isBillingError(e)) send({ type: 'billing' });
+    if (provider.isBillingError(e)) send({ type: 'billing', provider: provider.id, label: provider.label });
     else send({ type: 'error', message: errMsg(e) });
   }
 
   finish();
 }
 
-/** Anthropic returns a 400 "credit balance is too low" when the account is out of credit. */
-function isBillingError(e: unknown): boolean {
-  const msg = (e instanceof Error ? e.message : String(e)).toLowerCase();
-  return msg.includes('credit balance') || msg.includes('billing');
-}
-
-async function callTool(mcp: McpSession | null, u: ToolUseBlock): Promise<string> {
+async function callTool(mcp: McpSession | null, u: ToolCall): Promise<string> {
   if (!mcp) return JSON.stringify({ error: `Tool '${u.name}' unavailable (MCP not connected)` });
   try {
     return await mcp.callTool(u.name, u.input);
   } catch (e) {
     return JSON.stringify({ error: errMsg(e) });
   }
-}
-
-function errMsg(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
 }
 
 function truncate(s: string, n: number): string {

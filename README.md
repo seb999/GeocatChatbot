@@ -3,7 +3,8 @@
 Standalone conversational assistant for the EEA geospatial metadata catalogue
 (GeoNetwork). It answers natural-language questions and performs cataloguing
 actions by driving the **`eea-geonetwork` MCP server**
-(`https://sdi-mcp.dspx.eu/`) through **Claude (Anthropic API)**.
+(`https://sdi-mcp.dspx.eu/`) through a **user-selectable LLM** —
+**Claude (Anthropic API)** or **GPT (OpenAI API)**.
 
 See [dev-plan/geocat-chatbot-dev-plan.md](dev-plan/geocat-chatbot-dev-plan.md)
 for the full plan, architecture, and roadmap.
@@ -11,17 +12,35 @@ for the full plan, architecture, and roadmap.
 ## Repository layout
 
 ```
-backend/     Node + TypeScript (Express) — Anthropic loop, MCP client
+backend/     Node + TypeScript (Express) — provider-neutral tool loop, MCP client
+  src/providers/  LLM adapters (anthropic.ts, openai.ts) behind one interface
 frontend/    React + Vite + TypeScript — chat UI
 dev-plan/    Planning documents
 Moneta/      Reference app (read-only, do not modify)
 ```
 
+## Choosing the model
+
+The UI header has two dropdowns — **provider** (Anthropic / OpenAI) and **model**.
+A provider is selectable only when its API key is configured on the server; an
+unconfigured provider shows *"(no key)"* and is disabled. The provider + model
+are sent with each request; keys never leave the backend.
+
+- **Switching model within a provider** (e.g. Opus → Sonnet) keeps the current
+  conversation — the message history stays format-compatible.
+- **Switching provider** (Anthropic ↔ OpenAI) starts a fresh conversation, since
+  the two APIs use different message/tool-call formats.
+
+The selectable models are curated in
+[backend/src/providers/index.ts](backend/src/providers/index.ts) (`MODEL_CATALOG`) —
+edit that list to add or remove models.
+
 ## Status
 
 - **Phase 0–3 built:** scaffold ✅, MCP client ✅, chat ✅, **confirm-gated writes ✅**.
 - **Access control ✅:** Firebase login (Google + email) + backend email allowlist.
-- To run: put your `ANTHROPIC_API_KEY` in `backend/.env`, press **F5**, open http://localhost:5173.
+- **Provider choice ✅:** switch between Anthropic and OpenAI (and pick the model) from the UI.
+- To run: put your `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY` in `backend/.env`, press **F5**, open http://localhost:5173.
 - Catalogue **edits are gated** — the assistant pauses and shows an Approve/Reject card before any write runs; executed/declined writes are recorded in `backend/audit.log`.
 
 > **Note:** the MCP server allows unauthenticated writes, but it targets a **sandbox** GeoNetwork, so this is fine for now. Before pointing it at a production catalogue, lock the write surface down (network allowlist / gateway / bearer token). See dev-plan §5.2.
@@ -32,7 +51,7 @@ Moneta/      Reference app (read-only, do not modify)
 
 ```bash
 cd backend
-cp .env.example .env     # set ANTHROPIC_API_KEY for Phase 2
+cp .env.example .env     # set ANTHROPIC_API_KEY and/or OPENAI_API_KEY
 npm install
 npm run dev              # http://localhost:8080
 npm run typecheck
@@ -40,7 +59,8 @@ npm run build            # → dist/
 ```
 
 Endpoints:
-- `GET /api/health` — liveness + config summary
+- `GET /api/health` — liveness + config summary (which provider keys are configured)
+- `GET /api/models` — provider + model catalog for the UI pickers
 - `GET /api/mcp-tools` — connect to the MCP server and list its tools (read/write tagged)
 
 ### Frontend (Vite, port 5173, proxies `/api` → backend)
@@ -84,8 +104,12 @@ before serving. `/api/health` stays public.
 
 ```
 # backend/.env
+# Configure a key for each provider you want selectable in the UI.
 ANTHROPIC_API_KEY=sk-ant-...
-ANTHROPIC_MODEL=claude-sonnet-5           # or claude-opus-4-8
+ANTHROPIC_MODEL=claude-opus-4-8           # per-provider default model
+OPENAI_API_KEY=sk-...                     # optional; enables the OpenAI option
+OPENAI_MODEL=gpt-5                        # per-provider default model
+LLM_PROVIDER=anthropic                    # default provider on load
 GEOCAT_MCP_URL=https://sdi-mcp.dspx.eu/
 GEOCAT_MCP_AUTH=                          # optional, if the MCP server needs a token
 FIREBASE_PROJECT_ID=sdimcpchatbot
