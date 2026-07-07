@@ -1,0 +1,28 @@
+:root {
+  --clr-bg: #f7f8fa;
+  --clr-surface: #ffffff;
+  --clr-border: #e3e6ea;
+  --clr-text: #1c2430;
+  --clr-muted: #6b7683;
+  --clr-primary: #1f7a5c;
+  --clr-write: #b45309;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--clr-text);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--clr-bg);
+}
+
+@keyframes chat-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0.25; }
+}
+.chat-blink {
+  animation: chat-blink 1s steps(1) infinite;
+}

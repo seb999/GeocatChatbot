@@ -1,0 +1,21 @@
+# dependencies
+**/node_modules/
+
+# build output
+**/dist/
+
+# env & secrets (keep .env.example)
+**/.env
+**/.env.local
+**/.env.*.local
+
+# logs
+**/*.log
+**/audit.log
+
+# os / editor cruft
+.DS_Store
+**/.DS_Store
+
+# ts incremental build info
+**/*.tsbuildinfo

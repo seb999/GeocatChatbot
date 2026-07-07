@@ -1,0 +1,39 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Backend (Express)",
+      "cwd": "${workspaceFolder}/backend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"],
+      "presentation": { "hidden": true }
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Frontend (Vite)",
+      "cwd": "${workspaceFolder}/frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"],
+      "serverReadyAction": {
+        "pattern": "Local:.*?(https?://\\S+)",
+        "uriFormat": "%s",
+        "action": "openExternally"
+      },
+      "presentation": { "hidden": true }
+    }
+  ],
+  "compounds": [
+    {
+      "name": "🚀 Start Geocat (backend + frontend)",
+      "configurations": ["Backend (Express)", "Frontend (Vite)"],
+      "stopAll": true
+    }
+  ]
+}

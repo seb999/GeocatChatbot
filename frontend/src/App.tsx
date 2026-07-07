@@ -1,0 +1,366 @@
+import { useEffect, useRef, useState } from 'react';
+import { useAuth } from './auth';
+
+interface Message {
+  role: 'user' | 'assistant';
+  content: string;
+  toolCalls?: string[];
+  notices?: string[];
+}
+
+interface PendingTool {
+  tool_use_id: string;
+  name: string;
+  label: string;
+  input: unknown;
+}
+
+type Segment = { type: 'text'; text: string } | { type: 'code'; code: string };
+
+function parseContent(content: string): Segment[] {
+  const segments: Segment[] = [];
+  const re = /```(?:\w+)?\n([\s\S]*?)```/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content)) !== null) {
+    if (m.index > last) {
+      const t = content.slice(last, m.index).trim();
+      if (t) segments.push({ type: 'text', text: t });
+    }
+    segments.push({ type: 'code', code: m[1].trim() });
+    last = m.index + m[0].length;
+  }
+  if (last < content.length) {
+    const tail = content.slice(last).trim();
+    if (tail) segments.push({ type: 'text', text: tail });
+  }
+  return segments;
+}
+
+function Badge({ label, muted }: { label: string; muted?: boolean }) {
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        borderRadius: 999,
+        border: '1px solid var(--clr-border)',
+        background: 'var(--clr-surface)',
+        padding: '2px 10px',
+        fontSize: 11,
+        color: muted ? 'var(--clr-muted)' : 'var(--clr-text)',
+      }}
+    >
+      <span style={{ width: 6, height: 6, borderRadius: 999, background: muted ? 'var(--clr-muted)' : 'var(--clr-primary)' }} />
+      {label}
+    </span>
+  );
+}
+
+function Bubble({ msg }: { msg: Message }) {
+  if (msg.role === 'user') {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <div style={{ maxWidth: '85%', borderRadius: 14, borderTopRightRadius: 4, background: 'var(--clr-primary)', color: '#fff', padding: '9px 13px', fontSize: 14, whiteSpace: 'pre-wrap' }}>
+          {msg.content}
+        </div>
+      </div>
+    );
+  }
+  const segments = msg.content ? parseContent(msg.content) : [];
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {(msg.toolCalls?.length || msg.notices?.length) && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {msg.toolCalls?.map((t, i) => <Badge key={`t${i}`} label={t} />)}
+          {msg.notices?.map((n, i) => <Badge key={`n${i}`} label={n} muted />)}
+        </div>
+      )}
+      {segments.map((seg, i) =>
+        seg.type === 'text' ? (
+          <div key={i} style={{ maxWidth: '92%', borderRadius: 14, borderTopLeftRadius: 4, border: '1px solid var(--clr-border)', background: 'var(--clr-surface)', padding: '9px 13px', fontSize: 14, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
+            {seg.text}
+          </div>
+        ) : (
+          <pre key={i} style={{ overflowX: 'auto', borderRadius: 10, border: '1px solid var(--clr-border)', background: '#0e1420', color: '#dbe4f0', padding: '11px 13px', fontSize: 12.5, fontFamily: "'SF Mono','Menlo',monospace", margin: 0 }}>
+            {seg.code}
+          </pre>
+        ),
+      )}
+    </div>
+  );
+}
+
+function InsertCoinCard({ onDismiss }: { onDismiss: () => void }) {
+  return (
+    <div
+      style={{
+        border: '2px solid #f5c518',
+        borderRadius: 12,
+        background: '#0e1420',
+        color: '#f5c518',
+        padding: '20px 18px',
+        textAlign: 'center',
+        fontFamily: "'SF Mono','Menlo',monospace",
+      }}
+    >
+      <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: 2 }}>▮ GAME OVER ▮</div>
+      <div className="chat-blink" style={{ fontSize: 15, marginTop: 8, letterSpacing: 1 }}>
+        INSERT COIN TO CONTINUE
+      </div>
+      <p style={{ fontSize: 12, color: '#9fb0c6', margin: '12px 0 16px', fontFamily: 'inherit', lineHeight: 1.5 }}>
+        The Anthropic credit balance is empty, so the assistant can't reply.
+        Add credit, then try your message again.
+      </p>
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+        <a
+          href="https://console.anthropic.com/settings/billing"
+          target="_blank"
+          rel="noreferrer"
+          style={{ padding: '8px 16px', borderRadius: 8, background: '#f5c518', color: '#0e1420', fontSize: 13, fontWeight: 700, textDecoration: 'none' }}
+        >
+          Add credit ↗
+        </a>
+        <button
+          onClick={onDismiss}
+          style={{ padding: '8px 16px', borderRadius: 8, background: 'transparent', color: '#f5c518', border: '1px solid #f5c518', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+        >
+          Dismiss
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ConfirmCard({ tools, onDecide, busy }: { tools: PendingTool[]; onDecide: (a: boolean) => void; busy: boolean }) {
+  return (
+    <div style={{ border: '1px solid var(--clr-write)', borderRadius: 12, background: '#fff8f0', padding: '12px 14px' }}>
+      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--clr-write)', marginBottom: 8 }}>
+        ⚠ This will modify the catalogue — approve to proceed
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+        {tools.map((t) => (
+          <div key={t.tool_use_id}>
+            <code style={{ fontSize: 13, fontWeight: 600 }}>{t.name}</code>
+            <pre style={{ overflowX: 'auto', margin: '4px 0 0', padding: '8px 10px', borderRadius: 8, background: '#0e1420', color: '#dbe4f0', fontSize: 12, fontFamily: "'SF Mono','Menlo',monospace" }}>
+              {JSON.stringify(t.input, null, 2)}
+            </pre>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button onClick={() => onDecide(true)} disabled={busy} style={{ border: 'none', borderRadius: 8, padding: '7px 14px', fontSize: 13, fontWeight: 600, color: '#fff', background: 'var(--clr-write)', cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.5 : 1 }}>
+          Approve &amp; run
+        </button>
+        <button onClick={() => onDecide(false)} disabled={busy} style={{ borderRadius: 8, padding: '7px 14px', fontSize: 13, fontWeight: 600, color: 'var(--clr-text)', background: 'var(--clr-surface)', border: '1px solid var(--clr-border)', cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.5 : 1 }}>
+          Reject
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export default function App() {
+  const [input, setInput] = useState('');
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [history, setHistory] = useState<unknown[]>([]);
+  const [pending, setPending] = useState<PendingTool[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState('');
+  const [outOfCredit, setOutOfCredit] = useState(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  // Latest history is captured via a ref so resume uses the freshest value.
+  const historyRef = useRef<unknown[]>([]);
+  const { user, signOut, getToken } = useAuth();
+
+  // fetch with a fresh Firebase ID token on the Authorization header.
+  async function authFetch(url: string, init: RequestInit = {}): Promise<Response> {
+    const token = await getToken();
+    return fetch(url, {
+      ...init,
+      headers: { ...(init.headers ?? {}), Authorization: `Bearer ${token}` },
+    });
+  }
+
+  useEffect(() => {
+    authFetch('/api/mcp-tools')
+      .then((r) => r.json())
+      .then((d) => setStatus(d.connected ? `Catalogue connected — ${d.count} tools` : 'Catalogue tools unavailable'))
+      .catch(() => setStatus('Catalogue tools unavailable'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, loading, pending]);
+
+  const patchLast = (fn: (m: Message) => Message) =>
+    setMessages((prev) => {
+      const next = [...prev];
+      next[next.length - 1] = fn(next[next.length - 1]);
+      return next;
+    });
+
+  async function runStream(body: unknown) {
+    const res = await authFetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok || !res.body) {
+      patchLast((m) => ({ ...m, content: m.content + `\n[Error ${res.status}: ${res.statusText}]` }));
+      return;
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let ev: Record<string, unknown>;
+        try {
+          ev = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        switch (ev.type) {
+          case 'content_delta':
+            patchLast((m) => ({ ...m, content: m.content + (ev.text as string) }));
+            break;
+          case 'tool_call':
+            patchLast((m) => ({ ...m, toolCalls: [...(m.toolCalls ?? []), ev.label as string] }));
+            break;
+          case 'notice':
+            patchLast((m) => ({ ...m, notices: [...(m.notices ?? []), ev.message as string] }));
+            break;
+          case 'confirm':
+            setPending(ev.tools as PendingTool[]);
+            break;
+          case 'billing':
+            setOutOfCredit(true);
+            break;
+          case 'history':
+            setHistory(ev.messages as unknown[]);
+            historyRef.current = ev.messages as unknown[];
+            break;
+          case 'error':
+            patchLast((m) => ({ ...m, content: m.content + `\n[Error: ${ev.message as string}]` }));
+            break;
+        }
+      }
+    }
+  }
+
+  async function handleSend() {
+    const text = input.trim();
+    if (!text || loading || pending) return;
+    setInput('');
+    setOutOfCredit(false);
+    setMessages((prev) => [...prev, { role: 'user', content: text }, { role: 'assistant', content: '', toolCalls: [], notices: [] }]);
+    setLoading(true);
+    try {
+      await runStream({ message: text, history });
+    } catch (err) {
+      patchLast((m) => ({ ...m, content: m.content + `\n[Error: ${String(err)}]` }));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function decide(approve: boolean) {
+    if (!pending || loading) return;
+    const decisions = pending.map((t) => ({ tool_use_id: t.tool_use_id, approve }));
+    setPending(null);
+    setLoading(true);
+    try {
+      await runStream({ history: historyRef.current, decisions });
+    } catch (err) {
+      patchLast((m) => ({ ...m, content: m.content + `\n[Error: ${String(err)}]` }));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const last = messages[messages.length - 1];
+  const showTyping = loading && last?.role === 'assistant' && !last?.content && !(last?.toolCalls?.length);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', maxWidth: 760, margin: '0 auto' }}>
+      <header style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 20px', borderBottom: '1px solid var(--clr-border)' }}>
+        <div style={{ flex: 1 }}>
+          <h1 style={{ margin: 0, fontSize: 18 }}>Geocat Assistant</h1>
+          <p style={{ margin: '3px 0 0', fontSize: 12, color: 'var(--clr-muted)' }}>
+            Search, explore &amp; edit the EEA metadata catalogue · {status || 'connecting…'}
+          </p>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ fontSize: 12, color: 'var(--clr-muted)', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {user?.email}
+          </div>
+          <button
+            onClick={() => signOut()}
+            style={{ marginTop: 2, border: 'none', background: 'none', padding: 0, fontSize: 12, color: 'var(--clr-primary)', cursor: 'pointer' }}
+          >
+            Sign out
+          </button>
+        </div>
+      </header>
+
+      <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {messages.length === 0 && (
+          <div style={{ margin: 'auto', textAlign: 'center', color: 'var(--clr-muted)', fontSize: 14, maxWidth: 440 }}>
+            <p style={{ fontSize: 15, color: 'var(--clr-text)' }}>Ask about the catalogue</p>
+            <p>e.g. "Find datasets about air quality in Italy", "Summarise record &lt;uuid&gt;", or "Add the 'Air pollution' tag to record &lt;uuid&gt;".</p>
+            <p style={{ fontSize: 12 }}>Edits require your explicit approval before they run.</p>
+          </div>
+        )}
+        {messages.map((msg, i) => (
+          <Bubble key={i} msg={msg} />
+        ))}
+        {pending && <ConfirmCard tools={pending} onDecide={decide} busy={loading} />}
+        {outOfCredit && <InsertCoinCard onDismiss={() => setOutOfCredit(false)} />}
+        {showTyping && (
+          <div style={{ display: 'flex', gap: 4, paddingLeft: 4 }}>
+            {[0, 1, 2].map((i) => (
+              <span key={i} style={{ width: 6, height: 6, borderRadius: 999, background: 'var(--clr-muted)', opacity: 0.5 }} />
+            ))}
+          </div>
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      <div style={{ borderTop: '1px solid var(--clr-border)', padding: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, borderRadius: 12, border: '1px solid var(--clr-border)', background: 'var(--clr-surface)', padding: '8px 12px' }}>
+          <textarea
+            rows={1}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSend();
+              }
+            }}
+            placeholder={pending ? 'Approve or reject the pending action above…' : 'Ask about catalogue records…'}
+            disabled={!!pending}
+            style={{ flex: 1, resize: 'none', border: 'none', outline: 'none', background: 'transparent', fontSize: 14, fontFamily: 'inherit', minHeight: 24, opacity: pending ? 0.5 : 1 }}
+          />
+          <button
+            onClick={handleSend}
+            disabled={!input.trim() || loading || !!pending}
+            style={{ border: 'none', borderRadius: 8, padding: '7px 14px', fontSize: 13, fontWeight: 600, color: '#fff', background: 'var(--clr-primary)', cursor: !input.trim() || loading || pending ? 'default' : 'pointer', opacity: !input.trim() || loading || pending ? 0.4 : 1 }}
+          >
+            Send
+          </button>
+        </div>
+        <p style={{ margin: '6px 0 0', textAlign: 'center', fontSize: 10, color: 'var(--clr-muted)' }}>Enter to send · Shift+Enter for newline</p>
+      </div>
+    </div>
+  );
+}

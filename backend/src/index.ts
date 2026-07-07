@@ -1,0 +1,66 @@
+import express from 'express';
+import { config } from './config.js';
+import { McpSession } from './mcp/client.js';
+import { isWriteTool } from './mcp/writeTools.js';
+import { chatHandler } from './chat.js';
+import { requireAuth, warnIfOpen, type AuthedUser } from './auth.js';
+
+const app = express();
+app.use(express.json({ limit: '5mb' }));
+
+/** Liveness check (public — no auth). */
+app.get('/api/health', (_req, res) => {
+  res.json({
+    ok: true,
+    model: config.anthropicModel,
+    anthropicKeyConfigured: Boolean(config.anthropicApiKey),
+    authConfigured: Boolean(config.firebaseProjectId),
+    mcpUrl: config.mcpUrl,
+  });
+});
+
+/** Who am I — used by the frontend to confirm backend authorization. */
+app.get('/api/me', requireAuth, (req: express.Request & { user?: AuthedUser }, res) => {
+  res.json(req.user);
+});
+
+/** Streaming chat (NDJSON): the Anthropic tool loop over the MCP catalogue. */
+app.post('/api/chat', requireAuth, chatHandler);
+
+/**
+ * Connect to the eea-geonetwork MCP server and list its tools, tagging each
+ * read/write. Graceful degradation — never 500s just because MCP is unreachable.
+ */
+app.get('/api/mcp-tools', requireAuth, async (_req, res) => {
+  if (!config.mcpUrl) {
+    return res.json({ connected: false, reason: 'GEOCAT_MCP_URL not configured' });
+  }
+  try {
+    const mcp = await McpSession.connect(config.mcpUrl, config.mcpAuth || undefined);
+    const tools = await mcp.listTools();
+    res.json({
+      connected: true,
+      url: config.mcpUrl,
+      count: tools.length,
+      readCount: tools.filter((t) => !isWriteTool(t.name)).length,
+      writeCount: tools.filter((t) => isWriteTool(t.name)).length,
+      tools: tools.map((t) => ({
+        name: t.name,
+        write: isWriteTool(t.name),
+        description: t.description,
+      })),
+    });
+  } catch (e) {
+    res.json({
+      connected: false,
+      url: config.mcpUrl,
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
+});
+
+app.listen(config.port, () => {
+  console.log(`[geocat] backend on http://localhost:${config.port}`);
+  console.log(`[geocat] MCP → ${config.mcpUrl}`);
+  warnIfOpen();
+});
