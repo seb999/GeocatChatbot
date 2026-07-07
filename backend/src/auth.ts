@@ -27,10 +27,15 @@ export async function verifyFirebaseToken(token: string): Promise<AuthedUser> {
   return { uid: String(payload.sub), email, name: payload.name as string | undefined };
 }
 
-/** Allowlist check. Deny-by-default: no config → nobody gets in. */
+/**
+ * Authorization check. When no allowlist is configured, we TRUST FIREBASE —
+ * any authenticated user is allowed, and access is managed in the Firebase
+ * console (disable sign-up + add users). Set ALLOWED_EMAILS/ALLOWED_DOMAINS to
+ * add an optional second, backend-enforced restriction on top.
+ */
 export function isAllowed(email: string): boolean {
   const { allowedEmails, allowedDomains } = config;
-  if (allowedEmails.length === 0 && allowedDomains.length === 0) return false;
+  if (allowedEmails.length === 0 && allowedDomains.length === 0) return true;
   if (allowedEmails.includes(email)) return true;
   const domain = email.split('@')[1] ?? '';
   return allowedDomains.includes(domain);
@@ -74,7 +79,7 @@ export function warnIfOpen(): void {
   if (!config.firebaseProjectId) {
     console.warn('[auth] FIREBASE_PROJECT_ID not set — protected routes will 500.');
   } else if (config.allowedEmails.length === 0 && config.allowedDomains.length === 0) {
-    console.warn('[auth] No ALLOWED_EMAILS/ALLOWED_DOMAINS set — deny-by-default, nobody can use the app.');
+    console.log('[auth] trusting Firebase — any authenticated user allowed (manage users in Firebase).');
   } else {
     console.log(
       `[auth] gate on: ${config.allowedEmails.length} email(s), ${config.allowedDomains.length} domain(s) allowed.`,

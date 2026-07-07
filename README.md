@@ -62,8 +62,11 @@ the backend verifies the Firebase ID token on every protected route (`/api/chat`
 `/api/mcp-tools`, `/api/me`) and checks the user's email against an **allowlist**
 before serving. `/api/health` stays public.
 
-- **Allowlist** — `backend/.env`: `ALLOWED_EMAILS` (comma-separated) and/or
-  `ALLOWED_DOMAINS`. Deny-by-default: if both are empty, nobody gets in.
+- **Who's allowed** — by default the backend **trusts Firebase**: any user
+  Firebase authenticates can use the app, so you manage access in the Firebase
+  console (disable sign-up + add users). Optionally set `ALLOWED_EMAILS`
+  (comma-separated) and/or `ALLOWED_DOMAINS` in `backend/.env` to enforce an
+  extra allowlist in the backend on top of Firebase.
 - **No service-account key needed** — tokens are verified against Google's public
   keys (`jose`) using `FIREBASE_PROJECT_ID`.
 - **Blocking new accounts:** the allowlist already stops non-approved users (they
@@ -86,8 +89,8 @@ ANTHROPIC_MODEL=claude-sonnet-5           # or claude-opus-4-8
 GEOCAT_MCP_URL=https://sdi-mcp.dspx.eu/
 GEOCAT_MCP_AUTH=                          # optional, if the MCP server needs a token
 FIREBASE_PROJECT_ID=sdimcpchatbot
-ALLOWED_EMAILS=you@example.com            # comma-separated
-ALLOWED_DOMAINS=                          # comma-separated, e.g. eea.europa.eu
+ALLOWED_EMAILS=                           # empty = trust Firebase; else comma-separated allowlist
+ALLOWED_DOMAINS=                          # optional, e.g. eea.europa.eu
 PORT=8080
 
 # frontend/.env  (Web-app config from Firebase console; apiKey is public)
