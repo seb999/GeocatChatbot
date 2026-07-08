@@ -26,6 +26,13 @@ interface PendingTool {
 interface ModelDef {
   id: string;
   label: string;
+  priceInPerMTok?: number;
+  priceOutPerMTok?: number;
+}
+
+function modelLabel(m: ModelDef): string {
+  if (m.priceInPerMTok == null || m.priceOutPerMTok == null) return m.label;
+  return `${m.label} ($${m.priceInPerMTok}/$${m.priceOutPerMTok} per MTok)`;
 }
 
 interface ProviderCat {
@@ -472,7 +479,7 @@ export default function App() {
             >
               {currentModels.map((m) => (
                 <option key={m.id} value={m.id}>
-                  {m.label}
+                  {modelLabel(m)}
                 </option>
               ))}
             </select>
