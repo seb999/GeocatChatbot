@@ -20,9 +20,9 @@ export const MODEL_CATALOG: Record<ProviderId, ModelDef[]> = {
     { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5', priceInPerMTok: 1, priceOutPerMTok: 5 },
   ],
   openai: [
-    { id: 'gpt-5', label: 'GPT-5' },
-    { id: 'gpt-5-mini', label: 'GPT-5 mini' },
-    { id: 'gpt-4.1', label: 'GPT-4.1' },
+    { id: 'gpt-5', label: 'GPT-5', priceInPerMTok: 1.25, priceOutPerMTok: 10 },
+    { id: 'gpt-5-mini', label: 'GPT-5 mini', priceInPerMTok: 0.25, priceOutPerMTok: 2 },
+    { id: 'gpt-4.1', label: 'GPT-4.1', priceInPerMTok: 2, priceOutPerMTok: 8 },
   ],
 };
 
