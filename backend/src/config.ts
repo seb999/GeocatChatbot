@@ -19,6 +19,9 @@ export const config = {
     | 'openai',
   mcpUrl: process.env.GEOCAT_MCP_URL ?? 'https://sdi-mcp.dspx.eu/',
   mcpAuth: process.env.GEOCAT_MCP_AUTH ?? '',
+  // SQLite file for user-defined skills (dev-plan/skills-architecture.md).
+  // Not durable in the current stateless Dockerfile — mount a volume in prod.
+  skillsDbPath: process.env.SKILLS_DB_PATH ?? 'skills.db',
   // Firebase auth gate
   firebaseProjectId: process.env.FIREBASE_PROJECT_ID ?? '',
   allowedEmails: parseList(process.env.ALLOWED_EMAILS),

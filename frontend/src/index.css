@@ -34,3 +34,9 @@ body {
 .chat-dot-pulse {
   animation: chat-dot-pulse 1.1s ease-in-out infinite;
 }
+
+@media (max-width: 900px) {
+  .skills-sidebar {
+    display: none;
+  }
+}

@@ -8,6 +8,7 @@ import { isWriteTool } from './mcp/writeTools.js';
 import { chatHandler } from './chat.js';
 import { catalog } from './providers/index.js';
 import { requireAuth, warnIfOpen, type AuthedUser } from './auth.js';
+import { createSkill, deleteSkill, listSkills, updateSkill } from './skills/store.js';
 
 const app = express();
 app.use(express.json({ limit: '5mb' }));
@@ -71,6 +72,37 @@ app.get('/api/mcp-tools', requireAuth, async (_req, res) => {
       error: e instanceof Error ? e.message : String(e),
     });
   }
+});
+
+type AuthedRequest = express.Request & { user?: AuthedUser };
+
+/** User-defined skills (dev-plan/skills-architecture.md) — scoped to the caller. */
+app.get('/api/skills', requireAuth, (req: AuthedRequest, res) => {
+  res.json({ skills: listSkills(req.user!.uid) });
+});
+
+app.post('/api/skills', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    res.status(201).json(createSkill(req.user!.uid, req.body ?? {}));
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+app.put('/api/skills/:id', requireAuth, (req: AuthedRequest, res) => {
+  try {
+    const skill = updateSkill(req.user!.uid, String(req.params.id), req.body ?? {});
+    if (!skill) return res.status(404).json({ error: 'Skill not found.' });
+    res.json(skill);
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+app.delete('/api/skills/:id', requireAuth, (req: AuthedRequest, res) => {
+  const ok = deleteSkill(req.user!.uid, String(req.params.id));
+  if (!ok) return res.status(404).json({ error: 'Skill not found.' });
+  res.status(204).end();
 });
 
 // In production the built frontend is served from the same origin (Docker copies

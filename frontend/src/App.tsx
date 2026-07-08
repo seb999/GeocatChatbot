@@ -47,6 +47,21 @@ interface BillingInfo {
   label: string;
 }
 
+interface Skill {
+  id: string;
+  name: string;
+  description: string;
+  body: string;
+}
+
+interface SkillFormState {
+  mode: 'create' | 'edit';
+  id?: string;
+  name: string;
+  description: string;
+  body: string;
+}
+
 type Segment = { type: 'text'; text: string } | { type: 'code'; code: string };
 
 function parseContent(content: string): Segment[] {
@@ -153,7 +168,7 @@ function ToolRow({ activity }: { activity: ToolActivity }) {
   );
 }
 
-function Bubble({ msg }: { msg: Message }) {
+function Bubble({ msg, onSaveAsSkill }: { msg: Message; onSaveAsSkill?: () => void }) {
   if (msg.role === 'user') {
     return (
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
@@ -169,6 +184,27 @@ function Bubble({ msg }: { msg: Message }) {
       {msg.toolCalls && msg.toolCalls.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {msg.toolCalls.map((t) => <ToolRow key={t.id} activity={t} />)}
+        </div>
+      )}
+      {msg.toolCalls && msg.toolCalls.length > 0 && onSaveAsSkill && (
+        <div>
+          <button
+            onClick={onSaveAsSkill}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              borderRadius: 999,
+              border: '1px solid var(--clr-border)',
+              background: 'var(--clr-surface)',
+              padding: '2px 10px',
+              fontSize: 11,
+              color: 'var(--clr-muted)',
+              cursor: 'pointer',
+            }}
+          >
+            💾 Save as skill
+          </button>
         </div>
       )}
       {msg.notices && msg.notices.length > 0 && (
@@ -266,6 +302,99 @@ function ConfirmCard({ tools, onDecide, busy }: { tools: PendingTool[]; onDecide
   );
 }
 
+const fieldStyle: React.CSSProperties = {
+  borderRadius: 8,
+  border: '1px solid var(--clr-border)',
+  background: 'var(--clr-bg)',
+  color: 'var(--clr-text)',
+  padding: '6px 8px',
+  fontSize: 13,
+  fontFamily: 'inherit',
+  width: '100%',
+};
+
+function SkillFormCard({
+  form,
+  onChange,
+  onSave,
+  onCancel,
+  busy,
+}: {
+  form: SkillFormState;
+  onChange: (f: SkillFormState) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  busy: boolean;
+}) {
+  return (
+    <div style={{ border: '1px solid var(--clr-border)', borderRadius: 12, background: 'var(--clr-surface)', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ fontSize: 13, fontWeight: 600 }}>{form.mode === 'create' ? '💾 Save as skill' : '✎ Edit skill'}</div>
+      <input
+        value={form.name}
+        onChange={(e) => onChange({ ...form, name: e.target.value })}
+        placeholder="Name (e.g. update-temporal-extent)"
+        style={fieldStyle}
+      />
+      <input
+        value={form.description}
+        onChange={(e) => onChange({ ...form, description: e.target.value })}
+        placeholder="One-line description"
+        style={fieldStyle}
+      />
+      <textarea
+        value={form.body}
+        onChange={(e) => onChange({ ...form, body: e.target.value })}
+        placeholder="Full instructions the assistant should follow next time"
+        rows={6}
+        style={{ ...fieldStyle, resize: 'vertical', fontFamily: "'SF Mono','Menlo',monospace", fontSize: 12 }}
+      />
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button
+          onClick={onSave}
+          disabled={busy || !form.name.trim() || !form.description.trim() || !form.body.trim()}
+          style={{ border: 'none', borderRadius: 8, padding: '7px 14px', fontSize: 13, fontWeight: 600, color: '#fff', background: 'var(--clr-primary)', cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.5 : 1 }}
+        >
+          Save
+        </button>
+        <button
+          onClick={onCancel}
+          disabled={busy}
+          style={{ borderRadius: 8, padding: '7px 14px', fontSize: 13, fontWeight: 600, color: 'var(--clr-text)', background: 'var(--clr-bg)', border: '1px solid var(--clr-border)', cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.5 : 1 }}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SkillCard({ skill, onEdit, onDelete }: { skill: Skill; onEdit: () => void; onDelete: () => void }) {
+  return (
+    <div style={{ border: '1px solid var(--clr-border)', borderRadius: 10, background: 'var(--clr-surface)', padding: '8px 10px' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 600, overflowWrap: 'break-word' }}>{skill.name}</div>
+          <div style={{ fontSize: 11.5, color: 'var(--clr-muted)', marginTop: 2 }}>{skill.description}</div>
+        </div>
+        <button
+          onClick={onEdit}
+          title="Edit"
+          style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, padding: 2, lineHeight: 1 }}
+        >
+          ✎
+        </button>
+        <button
+          onClick={onDelete}
+          title="Delete"
+          style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, padding: 2, lineHeight: 1 }}
+        >
+          🗑
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
@@ -277,6 +406,9 @@ export default function App() {
   const [providers, setProviders] = useState<ProviderCat[]>([]);
   const [provider, setProvider] = useState('');
   const [model, setModel] = useState('');
+  const [skills, setSkills] = useState<Skill[]>([]);
+  const [skillForm, setSkillForm] = useState<SkillFormState | null>(null);
+  const [skillBusy, setSkillBusy] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   // Latest history is captured via a ref so resume uses the freshest value.
   const historyRef = useRef<unknown[]>([]);
@@ -291,11 +423,21 @@ export default function App() {
     });
   }
 
+  function refreshSkills() {
+    authFetch('/api/skills')
+      .then((r) => r.json())
+      .then((d) => setSkills(d.skills ?? []))
+      .catch(() => {
+        /* sidebar just stays empty */
+      });
+  }
+
   useEffect(() => {
     authFetch('/api/mcp-tools')
       .then((r) => r.json())
       .then((d) => setStatus(d.connected ? `Catalogue connected — ${d.count} tools` : 'Catalogue tools unavailable'))
       .catch(() => setStatus('Catalogue tools unavailable'));
+    refreshSkills();
     authFetch('/api/models')
       .then((r) => r.json())
       .then((d) => {
@@ -442,11 +584,69 @@ export default function App() {
     }
   }
 
+  function openSaveForm(assistantMsg: Message, userText: string) {
+    const slug = userText
+      .trim()
+      .split(/\s+/)
+      .slice(0, 6)
+      .join('-')
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, '');
+    const toolNames = [...new Set((assistantMsg.toolCalls ?? []).map((t) => t.name))].join(', ');
+    setSkillForm({
+      mode: 'create',
+      name: slug || 'new-skill',
+      description: userText.slice(0, 120),
+      body: [
+        `When the user asks to: ${userText}`,
+        toolNames ? `Tools used: ${toolNames}` : '',
+        assistantMsg.content ? `\n${assistantMsg.content}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    });
+  }
+
+  function openEditForm(skill: Skill) {
+    setSkillForm({ mode: 'edit', id: skill.id, name: skill.name, description: skill.description, body: skill.body });
+  }
+
+  async function saveSkillForm() {
+    if (!skillForm) return;
+    setSkillBusy(true);
+    try {
+      const payload = {
+        name: skillForm.name.trim(),
+        description: skillForm.description.trim(),
+        body: skillForm.body.trim(),
+      };
+      const url = skillForm.mode === 'create' ? '/api/skills' : `/api/skills/${skillForm.id}`;
+      const res = await authFetch(url, {
+        method: skillForm.mode === 'create' ? 'POST' : 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        setSkillForm(null);
+        refreshSkills();
+      }
+    } finally {
+      setSkillBusy(false);
+    }
+  }
+
+  async function deleteSkillCard(skill: Skill) {
+    if (!window.confirm(`Delete skill "${skill.name}"?`)) return;
+    const res = await authFetch(`/api/skills/${skill.id}`, { method: 'DELETE' });
+    if (res.ok) setSkills((prev) => prev.filter((s) => s.id !== skill.id));
+  }
+
   const last = messages[messages.length - 1];
   const showTyping = loading && last?.role === 'assistant' && !last?.content && !(last?.toolCalls?.length);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', maxWidth: 760, margin: '0 auto' }}>
+    <div style={{ display: 'flex', height: '100vh' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', flex: 1, maxWidth: 760, margin: '0 auto', minWidth: 0 }}>
       <header style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 20px', borderBottom: '1px solid var(--clr-border)' }}>
         <div style={{ flex: 1 }}>
           <h1 style={{ margin: 0, fontSize: 18 }}>Geocat Assistant</h1>
@@ -506,9 +706,21 @@ export default function App() {
             <p style={{ fontSize: 12 }}>Edits require your explicit approval before they run.</p>
           </div>
         )}
-        {messages.map((msg, i) => (
-          <Bubble key={i} msg={msg} />
-        ))}
+        {messages.map((msg, i) => {
+          const streaming = loading && i === messages.length - 1;
+          const prevUser = i > 0 ? messages[i - 1] : undefined;
+          const canSave = msg.role === 'assistant' && !streaming && !!msg.toolCalls?.length && prevUser?.role === 'user';
+          return (
+            <Bubble
+              key={i}
+              msg={msg}
+              onSaveAsSkill={canSave ? () => openSaveForm(msg, prevUser!.content) : undefined}
+            />
+          );
+        })}
+        {skillForm && (
+          <SkillFormCard form={skillForm} onChange={setSkillForm} onSave={saveSkillForm} onCancel={() => setSkillForm(null)} busy={skillBusy} />
+        )}
         {pending && <ConfirmCard tools={pending} onDecide={decide} busy={loading} />}
         {billing && <InsertCoinCard info={billing} onDismiss={() => setBilling(null)} />}
         {showTyping && (
@@ -547,6 +759,20 @@ export default function App() {
         </div>
         <p style={{ margin: '6px 0 0', textAlign: 'center', fontSize: 10, color: 'var(--clr-muted)' }}>Enter to send · Shift+Enter for newline</p>
       </div>
+    </div>
+
+    <aside className="skills-sidebar" style={{ width: 280, flexShrink: 0, borderLeft: '1px solid var(--clr-border)', padding: 16, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ fontSize: 13, fontWeight: 600 }}>Saved skills</div>
+      {skills.length === 0 ? (
+        <p style={{ fontSize: 12, color: 'var(--clr-muted)' }}>
+          No skills saved yet. Use "💾 Save as skill" under a reply to reuse it later.
+        </p>
+      ) : (
+        skills.map((s) => (
+          <SkillCard key={s.id} skill={s} onEdit={() => openEditForm(s)} onDelete={() => deleteSkillCard(s)} />
+        ))
+      )}
+    </aside>
     </div>
   );
 }

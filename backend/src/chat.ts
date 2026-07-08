@@ -1,10 +1,13 @@
 import type { Request, Response } from 'express';
 import { appendFile } from 'node:fs/promises';
 import { config } from './config.js';
-import { McpSession } from './mcp/client.js';
+import type { AuthedUser } from './auth.js';
+import { McpSession, type McpToolDef } from './mcp/client.js';
 import { isWriteTool } from './mcp/writeTools.js';
 import { getProvider, isValidModel, type ProviderId } from './providers/index.js';
 import { errMsg, type ToolCall, type ToolResult } from './providers/types.js';
+import { listCatalog } from './skills/store.js';
+import { isLoadSkillTool, LOAD_SKILL_TOOL, runLoadSkill } from './skills/tool.js';
 
 const SYSTEM_PROMPT = `You are the assistant for the EEA geospatial metadata catalogue (GeoNetwork),
 which you reach through catalogue tools.
@@ -32,6 +35,15 @@ Rules:
 - Before any modifying action, briefly state what you're changing and why, then proceed —
   modifying actions run immediately, without a separate user confirmation step.
 - Show titles, UUIDs, and geographic extents clearly. Keep answers concise.`;
+
+/** Appends the user's saved-skill catalogue (name + description only — the
+ * full body is loaded on demand via the load_skill tool) to the base prompt. */
+function buildSystemPrompt(uid: string): string {
+  const catalog = listCatalog(uid);
+  if (catalog.length === 0) return SYSTEM_PROMPT;
+  const lines = catalog.map((s) => `- ${s.name}: ${s.description}`).join('\n');
+  return `${SYSTEM_PROMPT}\n\nSaved skills available for this user (call load_skill with the exact name if one looks relevant):\n${lines}`;
+}
 
 const MAX_TOOL_ROUNDS = 100;
 /** Cap on tool-result content actually stored in history (the UI preview has its own, smaller cap). */
@@ -82,6 +94,7 @@ function labelFor(name: string): string {
     delete_record_tags: 'Removing tags…',
     process_record: 'Running process…',
     delete_attachment: 'Deleting attachment…',
+    load_skill: 'Loading saved skill…',
   };
   return map[name] ?? `${name.replace(/_/g, ' ')}…`;
 }
@@ -107,7 +120,11 @@ function resolveModel(body: ChatBody): { providerId: ProviderId; model: string }
   return { providerId, model };
 }
 
-export async function chatHandler(req: Request, res: Response): Promise<void> {
+export async function chatHandler(
+  req: Request & { user?: AuthedUser },
+  res: Response,
+): Promise<void> {
+  const uid = req.user!.uid;
   res.setHeader('Content-Type', 'application/x-ndjson');
   res.setHeader('Cache-Control', 'no-cache');
   const send = (ev: unknown) => res.write(JSON.stringify(ev) + '\n');
@@ -135,13 +152,15 @@ export async function chatHandler(req: Request, res: Response): Promise<void> {
 
   // Connect to MCP (graceful degradation).
   let mcp: McpSession | null = null;
-  let tools: unknown = provider.formatTools([]);
+  let mcpTools: McpToolDef[] = [];
   try {
     mcp = await McpSession.connect(config.mcpUrl, config.mcpAuth || undefined);
-    tools = provider.formatTools(await mcp.listTools());
+    mcpTools = await mcp.listTools();
   } catch (e) {
     send({ type: 'notice', message: `Catalogue tools unavailable: ${errMsg(e)}` });
   }
+  const systemPrompt = buildSystemPrompt(uid);
+  const tools: unknown = provider.formatTools([...mcpTools, LOAD_SKILL_TOOL]);
 
   try {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
@@ -151,7 +170,7 @@ export async function chatHandler(req: Request, res: Response): Promise<void> {
         // Need a model turn.
         const turn = await provider.streamTurn({
           model,
-          system: SYSTEM_PROMPT,
+          system: systemPrompt,
           tools,
           messages,
           onText: (delta) => send({ type: 'content_delta', text: delta }),
@@ -171,7 +190,7 @@ export async function chatHandler(req: Request, res: Response): Promise<void> {
         const write = isWriteTool(u.name);
         // Announce the call with its arguments, run it, then send a result preview.
         send({ type: 'tool_call', id: u.id, name: u.name, label: labelFor(u.name), input: u.input });
-        const content = await callTool(mcp, u);
+        const content = isLoadSkillTool(u.name) ? runLoadSkill(uid, u.input) : await callTool(mcp, u);
         if (write) await audit({ event: 'write_executed', tool: u.name, input: u.input });
         send({ type: 'tool_result', id: u.id, name: u.name, preview: truncate(content, 1500) });
         results.push({ id: u.id, name: u.name, content: truncate(content, TOOL_RESULT_MAX_CHARS) });

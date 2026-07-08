@@ -13,6 +13,10 @@
 **/*.log
 **/audit.log
 
+# local skills SQLite db (dev-plan/skills-architecture.md)
+**/skills.db
+**/skills.db-*
+
 # os / editor cruft
 .DS_Store
 **/.DS_Store
