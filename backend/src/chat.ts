@@ -12,11 +12,25 @@ which you reach through catalogue tools.
 You can SEARCH and READ records, and also MODIFY them (update titles/fields, manage tags,
 duplicate records, manage attachments, run XSL processes).
 
+Schema: records use ISO 19115-3 (not 19139). Common namespaces: mdb (root), mri
+(identification), cit (citation), gex (extent), gml (geometry/time), gco (basic types).
+Frequently-edited fields:
+- Resource identifier: cit:identifier/mcc:MD_Identifier/mcc:code
+- Creation/publication date: cit:date[cit:CI_DateTypeCode/@codeListValue='creation'|'publication']/cit:CI_Date/cit:date/gco:Date
+- Temporal extent: gex:EX_TemporalExtent/gex:extent/gml:TimePeriod/gml:beginPosition|endPosition
+
 Rules:
 - Prefer get_record_summary over get_record unless the user asks for full detail.
-- Never invent records, UUIDs, tags, or extents — search or fetch first, then act on the tool result.
-- Before any modifying action, briefly state what you will change and why. Every modifying action
-  is confirmed by the user through the app before it runs; if the user declines, acknowledge and stop.
+- Never invent records, UUIDs, tags, extents, or XPaths — search or fetch first, then act on
+  the tool result. But if the user already supplies exact values/XPaths/group IDs in their
+  request, use them directly rather than re-discovering them with extra reads.
+- Draft records return 403 on fetch/export — don't attempt to "verify" a draft afterward.
+  Report success/failure from the update call itself; the record stays a draft until the
+  user approves/publishes it manually.
+- When a request touches several records independently (e.g. one duplicate per year), batch
+  the calls per record instead of finishing one record fully before starting the next.
+- Before any modifying action, briefly state what you're changing and why, then proceed —
+  modifying actions run immediately, without a separate user confirmation step.
 - Show titles, UUIDs, and geographic extents clearly. Keep answers concise.`;
 
 const MAX_TOOL_ROUNDS = 100;
@@ -41,16 +55,9 @@ function windowHistory(messages: unknown[], maxTurns: number): unknown[] {
   return messages.slice(cutPoints[cutPoints.length - maxTurns]);
 }
 
-interface Decision {
-  tool_use_id: string;
-  approve: boolean;
-  note?: string;
-}
-
 interface ChatBody {
   message?: string;
   history?: unknown[];
-  decisions?: Decision[];
   provider?: string;
   model?: string;
 }
@@ -118,13 +125,10 @@ export async function chatHandler(req: Request, res: Response): Promise<void> {
     return finish();
   }
 
-  const decisions = new Map<string, Decision>();
-  for (const d of body.decisions ?? []) decisions.set(d.tool_use_id, d);
-
   const messages: unknown[] = windowHistory([...(body.history ?? [])], MAX_HISTORY_TURNS);
   if (body.message?.trim()) {
     messages.push(provider.userMessage(body.message.trim()));
-  } else if (decisions.size === 0) {
+  } else {
     send({ type: 'error', message: 'Empty message.' });
     return finish();
   }
@@ -161,39 +165,10 @@ export async function chatHandler(req: Request, res: Response): Promise<void> {
         continue; // next iteration resolves the tool calls
       }
 
-      // There are unresolved tool calls. Gate on undecided writes.
-      const undecidedWrites = uses.filter((u) => isWriteTool(u.name) && !decisions.has(u.id));
-      if (undecidedWrites.length > 0) {
-        send({
-          type: 'confirm',
-          tools: undecidedWrites.map((u) => ({
-            tool_use_id: u.id,
-            name: u.name,
-            label: labelFor(u.name),
-            input: u.input,
-          })),
-        });
-        send({ type: 'history', messages });
-        break; // wait for the client to resume with decisions
-      }
-
-      // Execute every pending tool: reads auto, writes per decision.
+      // Execute every pending tool immediately (writes run unconfirmed, but audited).
       const results: ToolResult[] = [];
       for (const u of uses) {
         const write = isWriteTool(u.name);
-        if (write) {
-          const d = decisions.get(u.id)!;
-          if (!d.approve) {
-            await audit({ event: 'write_declined', tool: u.name, input: u.input });
-            results.push({
-              id: u.id,
-              name: u.name,
-              content: `User declined this action.${d.note ? ' Note: ' + d.note : ''}`,
-              isError: true,
-            });
-            continue;
-          }
-        }
         // Announce the call with its arguments, run it, then send a result preview.
         send({ type: 'tool_call', id: u.id, name: u.name, label: labelFor(u.name), input: u.input });
         const content = await callTool(mcp, u);
@@ -202,7 +177,6 @@ export async function chatHandler(req: Request, res: Response): Promise<void> {
         results.push({ id: u.id, name: u.name, content: truncate(content, TOOL_RESULT_MAX_CHARS) });
       }
       for (const m of provider.toolResultMessages(results)) messages.push(m);
-      decisions.clear(); // consumed; further writes need fresh confirmation
 
       if (round === MAX_TOOL_ROUNDS - 1) {
         send({ type: 'notice', message: 'Reached the tool-call limit for this turn.' });

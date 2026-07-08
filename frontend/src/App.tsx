@@ -524,7 +524,7 @@ export default function App() {
       <div style={{ borderTop: '1px solid var(--clr-border)', padding: 12 }}>
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, borderRadius: 12, border: '1px solid var(--clr-border)', background: 'var(--clr-surface)', padding: '8px 12px' }}>
           <textarea
-            rows={1}
+            rows={3}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
@@ -535,7 +535,7 @@ export default function App() {
             }}
             placeholder={pending ? 'Approve or reject the pending action above…' : 'Ask about catalogue records…'}
             disabled={!!pending}
-            style={{ flex: 1, resize: 'none', border: 'none', outline: 'none', background: 'transparent', fontSize: 14, fontFamily: 'inherit', minHeight: 24, opacity: pending ? 0.5 : 1 }}
+            style={{ flex: 1, resize: 'vertical', border: 'none', outline: 'none', background: 'transparent', fontSize: 14, fontFamily: 'inherit', minHeight: 60, maxHeight: 240, opacity: pending ? 0.5 : 1 }}
           />
           <button
             onClick={handleSend}
