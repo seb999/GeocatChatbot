@@ -20,6 +20,26 @@ Rules:
 - Show titles, UUIDs, and geographic extents clearly. Keep answers concise.`;
 
 const MAX_TOOL_ROUNDS = 12;
+/** Cap on tool-result content actually stored in history (the UI preview has its own, smaller cap). */
+const TOOL_RESULT_MAX_CHARS = 6000;
+/** How many of the most recent user turns to keep; older turns are dropped from history. */
+const MAX_HISTORY_TURNS = 20;
+
+/**
+ * Keep only the last `maxTurns` user turns. Cuts are made at plain text user
+ * messages (role 'user', string content) — the shape `provider.userMessage()`
+ * produces — never in the middle of a turn, so a tool_use is never separated
+ * from its tool_result.
+ */
+function windowHistory(messages: unknown[], maxTurns: number): unknown[] {
+  const cutPoints: number[] = [];
+  messages.forEach((m, i) => {
+    const msg = m as { role?: string; content?: unknown };
+    if (msg.role === 'user' && typeof msg.content === 'string') cutPoints.push(i);
+  });
+  if (cutPoints.length <= maxTurns) return messages;
+  return messages.slice(cutPoints[cutPoints.length - maxTurns]);
+}
 
 interface Decision {
   tool_use_id: string;
@@ -101,7 +121,7 @@ export async function chatHandler(req: Request, res: Response): Promise<void> {
   const decisions = new Map<string, Decision>();
   for (const d of body.decisions ?? []) decisions.set(d.tool_use_id, d);
 
-  const messages: unknown[] = [...(body.history ?? [])];
+  const messages: unknown[] = windowHistory([...(body.history ?? [])], MAX_HISTORY_TURNS);
   if (body.message?.trim()) {
     messages.push(provider.userMessage(body.message.trim()));
   } else if (decisions.size === 0) {
@@ -179,7 +199,7 @@ export async function chatHandler(req: Request, res: Response): Promise<void> {
         const content = await callTool(mcp, u);
         if (write) await audit({ event: 'write_executed', tool: u.name, input: u.input });
         send({ type: 'tool_result', id: u.id, name: u.name, preview: truncate(content, 1500) });
-        results.push({ id: u.id, name: u.name, content });
+        results.push({ id: u.id, name: u.name, content: truncate(content, TOOL_RESULT_MAX_CHARS) });
       }
       for (const m of provider.toolResultMessages(results)) messages.push(m);
       decisions.clear(); // consumed; further writes need fresh confirmation
