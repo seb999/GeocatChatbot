@@ -19,7 +19,7 @@ Rules:
   is confirmed by the user through the app before it runs; if the user declines, acknowledge and stop.
 - Show titles, UUIDs, and geographic extents clearly. Keep answers concise.`;
 
-const MAX_TOOL_ROUNDS = 30;
+const MAX_TOOL_ROUNDS = 100;
 /** Cap on tool-result content actually stored in history (the UI preview has its own, smaller cap). */
 const TOOL_RESULT_MAX_CHARS = 6000;
 /** How many of the most recent user turns to keep; older turns are dropped from history. */
