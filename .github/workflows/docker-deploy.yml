@@ -42,7 +42,7 @@ jobs:
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
       - name: Pull latest image
-        run: docker pull ghcr.io/${{ github.repository }}:latest
+        run: docker pull ghcr.io/${{ github.repository_owner }}/geocatchatbot:latest
 
       - name: Restart container
         run: |
@@ -53,4 +53,4 @@ jobs:
             -v geocat-data:/app/data \
             --restart unless-stopped \
             --name geocat \
-            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository_owner }}/geocatchatbot:latest
