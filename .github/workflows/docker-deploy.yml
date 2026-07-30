@@ -33,3 +33,24 @@ jobs:
               --restart unless-stopped \
               --name geocat \
               ghcr.io/${{ github.repository_owner }}/geocatchatbot:latest
+
+  deploy-eeadh:
+    runs-on: self-hosted
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Pull latest image
+        run: docker pull ghcr.io/${{ github.repository }}:latest
+
+      - name: Restart container
+        run: |
+          docker network create app-net || true
+          docker rm -f geocat || true
+          docker run -d --network app-net -p 127.0.0.1:8883:8080 \
+            --env-file ~/ENV_FILES/geocat.env \
+            -v geocat-data:/app/data \
+            --restart unless-stopped \
+            --name geocat \
+            ghcr.io/${{ github.repository }}:latest
