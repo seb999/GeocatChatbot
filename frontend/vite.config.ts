@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 
 // Dev: proxy /api → backend (Express on :8080). Prod: same-origin.
 export default defineConfig({
+  base: '/geocatchatbot/',
   plugins: [react()],
   server: {
     port: 5173,
