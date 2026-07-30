@@ -395,6 +395,8 @@ function SkillCard({ skill, onEdit, onDelete }: { skill: Skill; onEdit: () => vo
   );
 }
 
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, '');
+
 export default function App() {
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
@@ -417,7 +419,8 @@ export default function App() {
   // fetch with a fresh Firebase ID token on the Authorization header.
   async function authFetch(url: string, init: RequestInit = {}): Promise<Response> {
     const token = await getToken();
-    return fetch(url, {
+    const prefixedUrl = url.startsWith('/api') ? `${BASE}${url}` : url;
+    return fetch(prefixedUrl, {
       ...init,
       headers: { ...(init.headers ?? {}), Authorization: `Bearer ${token}` },
     });
