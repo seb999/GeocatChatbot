@@ -165,7 +165,8 @@ export default function AuthGate({ children }: { children: ReactNode }) {
     (async () => {
       try {
         const token = await getToken();
-        const res = await fetch('/api/me', { headers: { Authorization: `Bearer ${token}` } });
+        const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+        const res = await fetch(`${base}/api/me`, { headers: { Authorization: `Bearer ${token}` } });
         if (cancelled) return;
         if (res.ok) {
           setAccess('allowed');
