@@ -1,8 +1,11 @@
-import type { LlmProvider } from './types.js';
+import { config } from '../config.js';
+import type { LlmProvider, ProviderId } from './types.js';
 import { AnthropicProvider } from './anthropic.js';
 import { OpenAIProvider } from './openai.js';
 
-export type ProviderId = 'anthropic' | 'openai';
+export type { ProviderId } from './types.js';
+
+export const PROVIDER_IDS: ProviderId[] = ['anthropic', 'openai', 'local'];
 
 export interface ModelDef {
   id: string;
@@ -24,12 +27,38 @@ export const MODEL_CATALOG: Record<ProviderId, ModelDef[]> = {
     { id: 'gpt-5-mini', label: 'GPT-5 mini', priceInPerMTok: 0.25, priceOutPerMTok: 2 },
     { id: 'gpt-4.1', label: 'GPT-4.1', priceInPerMTok: 2, priceOutPerMTok: 8 },
   ],
+  // Whatever the EEA gateway serves — configured with EEA_MODEL(S), no pricing
+  // (the gateway is in-house, so there is no per-token cost to show).
+  local: localModels(),
 };
+
+/** Models exposed by the in-house gateway: EEA_MODEL plus optional extras. */
+function localModels(): ModelDef[] {
+  const ids = config.localModel
+    .split(',')
+    .map((m) => m.trim())
+    .filter(Boolean);
+  return ids.map((id) => ({ id, label: id.split('/').pop() || id }));
+}
 
 const providers: Record<ProviderId, LlmProvider> = {
   anthropic: new AnthropicProvider(),
   openai: new OpenAIProvider(),
+  // The EEA gateway speaks the OpenAI API — same provider, different endpoint.
+  local: new OpenAIProvider({
+    id: 'local',
+    label: 'EEA Local LLM',
+    apiKey: () => config.localApiKey,
+    baseUrl: () => config.localBaseUrl,
+  }),
 };
+
+/** Server-side default model for a provider (used when the UI sends none). */
+export function defaultModelFor(id: ProviderId): string {
+  if (id === 'openai') return config.openaiModel;
+  if (id === 'local') return MODEL_CATALOG.local[0]?.id ?? config.localModel;
+  return config.anthropicModel;
+}
 
 export function getProvider(id: string): LlmProvider | null {
   return (providers as Record<string, LlmProvider>)[id] ?? null;
@@ -40,13 +69,18 @@ export function isValidModel(providerId: ProviderId, model: string): boolean {
   return MODEL_CATALOG[providerId]?.some((m) => m.id === model) ?? false;
 }
 
+/** True when `id` is a known provider id (guards untrusted input). */
+export function isProviderId(id: unknown): id is ProviderId {
+  return typeof id === 'string' && PROVIDER_IDS.includes(id as ProviderId);
+}
+
 /**
  * Provider + model catalog for the UI, tagging which providers have a key
  * configured, plus the server's default provider/model.
  */
 export function catalog() {
   return {
-    providers: (Object.keys(MODEL_CATALOG) as ProviderId[]).map((id) => ({
+    providers: PROVIDER_IDS.map((id) => ({
       id,
       label: providers[id].label,
       configured: providers[id].isConfigured(),

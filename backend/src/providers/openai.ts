@@ -6,7 +6,14 @@ import type {
 } from 'openai/resources/chat/completions';
 import { config } from '../config.js';
 import type { McpToolDef } from '../mcp/client.js';
-import type { LlmProvider, StreamTurnArgs, ToolCall, ToolResult, TurnResult } from './types.js';
+import type {
+  LlmProvider,
+  ProviderId,
+  StreamTurnArgs,
+  ToolCall,
+  ToolResult,
+  TurnResult,
+} from './types.js';
 
 /** Assistant message shape we keep in history (mirrors the OpenAI API). */
 interface AssistantMessage {
@@ -15,18 +22,53 @@ interface AssistantMessage {
   tool_calls?: ChatCompletionMessageToolCall[];
 }
 
-export class OpenAIProvider implements LlmProvider {
-  readonly id = 'openai' as const;
-  readonly label = 'OpenAI';
+/**
+ * Where an OpenAI-compatible endpoint lives. Credentials are read lazily so the
+ * provider can be constructed before config is fully resolved.
+ */
+export interface OpenAIEndpoint {
+  id: ProviderId;
+  label: string;
+  apiKey: () => string;
+  /** Omit for api.openai.com; set for a gateway (e.g. the EEA in-house LLM). */
+  baseUrl?: () => string;
+}
 
+const OPENAI_ENDPOINT: OpenAIEndpoint = {
+  id: 'openai',
+  label: 'OpenAI',
+  apiKey: () => config.openaiApiKey,
+};
+
+/**
+ * Chat provider speaking the OpenAI Chat Completions API. Used both for OpenAI
+ * itself and for OpenAI-compatible gateways, which differ only in base URL.
+ */
+export class OpenAIProvider implements LlmProvider {
+  readonly id: ProviderId;
+  readonly label: string;
+
+  private readonly endpoint: OpenAIEndpoint;
   private client: OpenAI | null = null;
 
+  constructor(endpoint: OpenAIEndpoint = OPENAI_ENDPOINT) {
+    this.endpoint = endpoint;
+    this.id = endpoint.id;
+    this.label = endpoint.label;
+  }
+
   isConfigured(): boolean {
-    return Boolean(config.openaiApiKey);
+    return Boolean(this.endpoint.apiKey());
   }
 
   private sdk(): OpenAI {
-    if (!this.client) this.client = new OpenAI({ apiKey: config.openaiApiKey });
+    if (!this.client) {
+      const baseURL = this.endpoint.baseUrl?.();
+      this.client = new OpenAI({
+        apiKey: this.endpoint.apiKey(),
+        ...(baseURL ? { baseURL: baseURL.replace(/\/+$/, '') } : {}),
+      });
+    }
     return this.client;
   }
 

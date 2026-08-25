@@ -4,7 +4,13 @@ import { config } from './config.js';
 import type { AuthedUser } from './auth.js';
 import { McpSession, type McpToolDef } from './mcp/client.js';
 import { isWriteTool } from './mcp/writeTools.js';
-import { getProvider, isValidModel, type ProviderId } from './providers/index.js';
+import {
+  defaultModelFor,
+  getProvider,
+  isProviderId,
+  isValidModel,
+  type ProviderId,
+} from './providers/index.js';
 import { errMsg, type ToolCall, type ToolResult } from './providers/types.js';
 import { listCatalog } from './skills/store.js';
 import { isLoadSkillTool, LOAD_SKILL_TOOL, runLoadSkill } from './skills/tool.js';
@@ -111,11 +117,8 @@ async function audit(entry: Record<string, unknown>): Promise<void> {
 
 /** Resolve provider + model from the request, validated against the catalog. */
 function resolveModel(body: ChatBody): { providerId: ProviderId; model: string } {
-  const providerId: ProviderId =
-    body.provider === 'openai' || body.provider === 'anthropic'
-      ? body.provider
-      : config.defaultProvider;
-  const fallbackModel = providerId === 'openai' ? config.openaiModel : config.anthropicModel;
+  const providerId: ProviderId = isProviderId(body.provider) ? body.provider : config.defaultProvider;
+  const fallbackModel = defaultModelFor(providerId);
   const model = body.model && isValidModel(providerId, body.model) ? body.model : fallbackModel;
   return { providerId, model };
 }

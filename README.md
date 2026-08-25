@@ -39,7 +39,7 @@ edit that list to add or remove models.
 
 - **Phase 0–3 built:** scaffold ✅, MCP client ✅, chat ✅, **confirm-gated writes ✅**.
 - **Access control ✅:** Firebase login (Google + email) + backend email allowlist.
-- **Provider choice ✅:** switch between Anthropic and OpenAI (and pick the model) from the UI.
+- **Provider choice ✅:** switch between Anthropic, OpenAI and the EEA in-house LLM gateway (Qwen — OpenAI-compatible) and pick the model, from the UI.
 - To run: put your `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY` in `backend/.env`, press **F5**, open http://localhost:5173.
 - Catalogue **edits are gated** — the assistant pauses and shows an Approve/Reject card before any write runs; executed/declined writes are recorded in `backend/audit.log`.
 
@@ -109,7 +109,10 @@ ANTHROPIC_API_KEY=sk-ant-...
 ANTHROPIC_MODEL=claude-opus-4-8           # per-provider default model
 OPENAI_API_KEY=sk-...                     # optional; enables the OpenAI option
 OPENAI_MODEL=gpt-5                        # per-provider default model
-LLM_PROVIDER=anthropic                    # default provider on load
+EEA_API_KEY=sk-...                        # optional; enables the "EEA Local LLM" option
+EEA_BASE_URL=https://llmgw.eea.europa.eu/v1
+EEA_MODEL=Inhouse-LLM/qwen3.8-27b         # comma-separated for several gateway models
+LLM_PROVIDER=anthropic                    # default provider on load: anthropic | openai | local
 GEOCAT_MCP_URL=https://sdi-mcp.dspx.eu/
 GEOCAT_MCP_AUTH=                          # optional, if the MCP server needs a token
 FIREBASE_PROJECT_ID=sdimcpchatbot

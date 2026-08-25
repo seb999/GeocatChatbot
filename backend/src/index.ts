@@ -6,7 +6,7 @@ import { config } from './config.js';
 import { McpSession } from './mcp/client.js';
 import { isWriteTool } from './mcp/writeTools.js';
 import { chatHandler } from './chat.js';
-import { catalog } from './providers/index.js';
+import { catalog, defaultModelFor } from './providers/index.js';
 import { requireAuth, warnIfOpen, type AuthedUser } from './auth.js';
 import { createSkill, deleteSkill, listSkills, updateSkill } from './skills/store.js';
 
@@ -20,6 +20,7 @@ app.get('/api/health', (_req, res) => {
     defaultProvider: config.defaultProvider,
     anthropicKeyConfigured: Boolean(config.anthropicApiKey),
     openaiKeyConfigured: Boolean(config.openaiApiKey),
+    localLlmKeyConfigured: Boolean(config.localApiKey),
     authConfigured: Boolean(config.firebaseProjectId),
     mcpUrl: config.mcpUrl,
   });
@@ -30,7 +31,7 @@ app.get('/api/models', requireAuth, (_req, res) => {
   res.json({
     ...catalog(),
     defaultProvider: config.defaultProvider,
-    defaultModel: config.defaultProvider === 'openai' ? config.openaiModel : config.anthropicModel,
+    defaultModel: defaultModelFor(config.defaultProvider),
   });
 });
 

@@ -1,5 +1,8 @@
 import type { McpToolDef } from '../mcp/client.js';
 
+/** Selectable chat backends. 'local' is the EEA in-house LLM gateway. */
+export type ProviderId = 'anthropic' | 'openai' | 'local';
+
 /** A single tool invocation the model wants to make. */
 export interface ToolCall {
   id: string;
@@ -40,7 +43,7 @@ export interface StreamTurnArgs {
  * requires a fresh conversation, but switching model within a provider does not).
  */
 export interface LlmProvider {
-  readonly id: 'anthropic' | 'openai';
+  readonly id: ProviderId;
   /** Human-facing label, used e.g. in the "out of credit" notice. */
   readonly label: string;
 
