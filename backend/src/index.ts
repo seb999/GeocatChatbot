@@ -9,6 +9,7 @@ import { chatHandler } from './chat.js';
 import { catalog, defaultModelFor } from './providers/index.js';
 import { requireAuth, warnIfOpen, type AuthedUser } from './auth.js';
 import { createSkill, deleteSkill, listSkills, updateSkill } from './skills/store.js';
+import { listPrompts } from './skills/prompts.js';
 
 const app = express();
 app.use(express.json({ limit: '5mb' }));
@@ -104,6 +105,12 @@ app.delete('/api/skills/:id', requireAuth, (req: AuthedRequest, res) => {
   const ok = deleteSkill(req.user!.uid, String(req.params.id));
   if (!ok) return res.status(404).json({ error: 'Skill not found.' });
   res.status(204).end();
+});
+
+app.get('/api/prompts', requireAuth, (req: AuthedRequest, res) => {
+  const limit = Math.min(Number(req.query.limit) || 100, 500);
+  const offset = Math.max(Number(req.query.offset) || 0, 0);
+  res.json(listPrompts(limit, offset));
 });
 
 // In production the built frontend is served from the same origin (Docker copies

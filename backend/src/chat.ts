@@ -14,6 +14,7 @@ import {
 import { errMsg, type ToolCall, type ToolResult } from './providers/types.js';
 import { listCatalog } from './skills/store.js';
 import { isLoadSkillTool, LOAD_SKILL_TOOL, runLoadSkill } from './skills/tool.js';
+import { logPrompt } from './skills/prompts.js';
 
 const SYSTEM_PROMPT = `You are the assistant for the EEA geospatial metadata catalogue (GeoNetwork),
 which you reach through catalogue tools.
@@ -147,7 +148,9 @@ export async function chatHandler(
 
   const messages: unknown[] = windowHistory([...(body.history ?? [])], MAX_HISTORY_TURNS);
   if (body.message?.trim()) {
-    messages.push(provider.userMessage(body.message.trim()));
+    const msg = body.message.trim();
+    messages.push(provider.userMessage(msg));
+    logPrompt(uid, req.user!.email ?? '', msg, providerId, model);
   } else {
     send({ type: 'error', message: 'Empty message.' });
     return finish();
