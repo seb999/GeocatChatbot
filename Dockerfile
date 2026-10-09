@@ -40,6 +40,7 @@ COPY backend/package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=backend /app/backend/dist ./dist
 COPY --from=frontend /app/frontend/dist ./public
+COPY backend/knowledge ./knowledge
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD node -e "fetch('http://localhost:'+(process.env.PORT||8080)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"

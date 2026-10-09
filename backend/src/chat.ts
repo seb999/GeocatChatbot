@@ -1,5 +1,7 @@
 import type { Request, Response } from 'express';
-import { appendFile } from 'node:fs/promises';
+import { appendFile, readdir, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
 import type { AuthedUser } from './auth.js';
 import { McpSession, type McpToolDef } from './mcp/client.js';
@@ -14,7 +16,7 @@ import {
 import { errMsg, type ToolCall, type ToolResult } from './providers/types.js';
 import { listCatalog } from './skills/store.js';
 import { isLoadSkillTool, LOAD_SKILL_TOOL, runLoadSkill } from './skills/tool.js';
-import { logPrompt } from './skills/prompts.js';
+import { logPrompt, updatePromptResult } from './skills/prompts.js';
 
 const SYSTEM_PROMPT = `You are the assistant for the EEA geospatial metadata catalogue (GeoNetwork),
 which you reach through catalogue tools.
@@ -43,13 +45,35 @@ Rules:
   modifying actions run immediately, without a separate user confirmation step.
 - Show titles, UUIDs, and geographic extents clearly. Keep answers concise.`;
 
-/** Appends the user's saved-skill catalogue (name + description only — the
- * full body is loaded on demand via the load_skill tool) to the base prompt. */
+// Load knowledge files once at startup.
+const knowledgeDir = join(fileURLToPath(import.meta.url), '..', '..', 'knowledge');
+let knowledgeBlock = '';
+(async () => {
+  try {
+    const files = (await readdir(knowledgeDir)).filter((f) => f.endsWith('.md')).sort();
+    const sections: string[] = [];
+    for (const f of files) {
+      const content = await readFile(join(knowledgeDir, f), 'utf-8');
+      sections.push(`### ${f.replace(/\.md$/, '')}\n${content.trim()}`);
+    }
+    if (sections.length > 0) {
+      knowledgeBlock = `\n\n## Knowledge base\n\nUse the following reference material to answer accurately and pick the right tools and XPaths:\n\n${sections.join('\n\n')}`;
+      console.log(`[geocat] loaded ${files.length} knowledge files from ${knowledgeDir}`);
+    }
+  } catch {
+    console.log('[geocat] no knowledge directory found — skipping');
+  }
+})();
+
+/** Appends knowledge files and the user's saved-skill catalogue to the base prompt. */
 function buildSystemPrompt(uid: string): string {
+  let prompt = SYSTEM_PROMPT + knowledgeBlock;
   const catalog = listCatalog(uid);
-  if (catalog.length === 0) return SYSTEM_PROMPT;
-  const lines = catalog.map((s) => `- ${s.name}: ${s.description}`).join('\n');
-  return `${SYSTEM_PROMPT}\n\nSaved skills available for this user (call load_skill with the exact name if one looks relevant):\n${lines}`;
+  if (catalog.length > 0) {
+    const lines = catalog.map((s) => `- ${s.name}: ${s.description}`).join('\n');
+    prompt += `\n\nSaved skills available for this user (call load_skill with the exact name if one looks relevant):\n${lines}`;
+  }
+  return prompt;
 }
 
 const MAX_TOOL_ROUNDS = 100;
@@ -147,10 +171,14 @@ export async function chatHandler(
   }
 
   const messages: unknown[] = windowHistory([...(body.history ?? [])], MAX_HISTORY_TURNS);
+  let promptId = 0;
+  const toolsUsed: string[] = [];
+  let replyText = '';
+
   if (body.message?.trim()) {
     const msg = body.message.trim();
     messages.push(provider.userMessage(msg));
-    logPrompt(uid, req.user!.email ?? '', msg, providerId, model);
+    promptId = logPrompt(uid, req.user!.email ?? '', msg, providerId, model);
   } else {
     send({ type: 'error', message: 'Empty message.' });
     return finish();
@@ -179,7 +207,7 @@ export async function chatHandler(
           system: systemPrompt,
           tools,
           messages,
-          onText: (delta) => send({ type: 'content_delta', text: delta }),
+          onText: (delta) => { replyText += delta; send({ type: 'content_delta', text: delta }); },
         });
         messages.push(turn.assistantMessage);
 
@@ -195,6 +223,7 @@ export async function chatHandler(
       for (const u of uses) {
         const write = isWriteTool(u.name);
         // Announce the call with its arguments, run it, then send a result preview.
+        if (!toolsUsed.includes(u.name)) toolsUsed.push(u.name);
         send({ type: 'tool_call', id: u.id, name: u.name, label: labelFor(u.name), input: u.input });
         const content = isLoadSkillTool(u.name) ? runLoadSkill(uid, u.input) : await callTool(mcp, u);
         if (write) await audit({ event: 'write_executed', tool: u.name, input: u.input });
@@ -213,6 +242,7 @@ export async function chatHandler(
     else send({ type: 'error', message: errMsg(e) });
   }
 
+  if (promptId) updatePromptResult(promptId, replyText, toolsUsed);
   finish();
 }
 

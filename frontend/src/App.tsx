@@ -14,6 +14,7 @@ interface Message {
   content: string;
   toolCalls?: ToolActivity[];
   notices?: string[];
+  elapsed?: number;
 }
 
 interface PendingTool {
@@ -223,6 +224,11 @@ function Bubble({ msg, onSaveAsSkill }: { msg: Message; onSaveAsSkill?: () => vo
           </pre>
         ),
       )}
+      {msg.elapsed != null && (
+        <div style={{ fontSize: 11, color: 'var(--clr-muted)', textAlign: 'right' }}>
+          {msg.elapsed < 1000 ? `${msg.elapsed}ms` : `${(msg.elapsed / 1000).toFixed(1)}s`}
+        </div>
+      )}
     </div>
   );
 }
@@ -395,7 +401,7 @@ function SkillCard({ skill, onEdit, onDelete }: { skill: Skill; onEdit: () => vo
   );
 }
 
-const BASE = import.meta.env.BASE_URL.replace(/\/$/, '');
+const BASE = import.meta.env.DEV ? '' : import.meta.env.BASE_URL.replace(/\/$/, '');
 
 export default function App() {
   const [input, setInput] = useState('');
@@ -409,8 +415,14 @@ export default function App() {
   const [provider, setProvider] = useState('');
   const [model, setModel] = useState('');
   const [skills, setSkills] = useState<Skill[]>([]);
+  const [knowledgeFiles, setKnowledgeFiles] = useState<{ name: string; file: string }[]>([]);
+  const [knowledgeOpen, setKnowledgeOpen] = useState<string | null>(null);
+  const [knowledgeContent, setKnowledgeContent] = useState<Record<string, string>>({});
   const [skillForm, setSkillForm] = useState<SkillFormState | null>(null);
   const [skillBusy, setSkillBusy] = useState(false);
+  const [elapsed, setElapsed] = useState<number>(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const startTimeRef = useRef<number>(0);
   const bottomRef = useRef<HTMLDivElement>(null);
   // Latest history is captured via a ref so resume uses the freshest value.
   const historyRef = useRef<unknown[]>([]);
@@ -441,6 +453,10 @@ export default function App() {
       .then((d) => setStatus(d.connected ? `Catalogue connected — ${d.count} tools` : 'Catalogue tools unavailable'))
       .catch(() => setStatus('Catalogue tools unavailable'));
     refreshSkills();
+    authFetch('/api/knowledge')
+      .then((r) => { console.log('knowledge status:', r.status, r.url); return r.text(); })
+      .then((t) => { console.log('knowledge body:', t.slice(0, 200)); try { const d = JSON.parse(t); setKnowledgeFiles(d.files ?? []); } catch (e) { console.error('knowledge parse error', e); } })
+      .catch((e) => { console.error('knowledge fetch failed:', e); });
     authFetch('/api/models')
       .then((r) => r.json())
       .then((d) => {
@@ -564,11 +580,19 @@ export default function App() {
     setBilling(null);
     setMessages((prev) => [...prev, { role: 'user', content: text }, { role: 'assistant', content: '', toolCalls: [], notices: [] }]);
     setLoading(true);
+    startTimeRef.current = Date.now();
+    setElapsed(0);
+    timerRef.current = setInterval(() => setElapsed(Date.now() - startTimeRef.current), 100);
     try {
       await runStream({ message: text, history });
     } catch (err) {
       patchLast((m) => ({ ...m, content: m.content + `\n[Error: ${String(err)}]` }));
     } finally {
+      if (timerRef.current) clearInterval(timerRef.current);
+      timerRef.current = null;
+      const finalElapsed = Date.now() - startTimeRef.current;
+      setElapsed(finalElapsed);
+      patchLast((m) => ({ ...m, elapsed: finalElapsed }));
       setLoading(false);
     }
   }
@@ -650,9 +674,17 @@ export default function App() {
   return (
     <div style={{ display: 'flex', height: '100vh' }}>
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', flex: 1, maxWidth: 760, margin: '0 auto', minWidth: 0 }}>
+      {loading && (
+        <div style={{ height: 3, background: 'var(--clr-border)', overflow: 'hidden' }}>
+          <div className="chat-progress-bar" style={{ height: '100%', background: 'var(--clr-primary)', width: '30%' }} />
+        </div>
+      )}
       <header style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 20px', borderBottom: '1px solid var(--clr-border)' }}>
         <div style={{ flex: 1 }}>
-          <h1 style={{ margin: 0, fontSize: 18 }}>Geocat Assistant</h1>
+          <h1 style={{ margin: 0, fontSize: 18, display: 'flex', alignItems: 'center', gap: 8 }}>
+            Geocat Assistant
+            {loading && <span className="chat-dot-pulse" style={{ width: 8, height: 8, borderRadius: 999, background: 'var(--clr-primary)' }} />}
+          </h1>
           <p style={{ margin: '3px 0 0', fontSize: 12, color: 'var(--clr-muted)' }}>
             Search, explore &amp; edit the EEA metadata catalogue · {status || 'connecting…'}
           </p>
@@ -726,11 +758,14 @@ export default function App() {
         )}
         {pending && <ConfirmCard tools={pending} onDecide={decide} busy={loading} />}
         {billing && <InsertCoinCard info={billing} onDismiss={() => setBilling(null)} />}
-        {showTyping && (
-          <div style={{ display: 'flex', gap: 4, paddingLeft: 4 }}>
-            {[0, 1, 2].map((i) => (
+        {loading && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingLeft: 4 }}>
+            {showTyping && [0, 1, 2].map((i) => (
               <span key={i} style={{ width: 6, height: 6, borderRadius: 999, background: 'var(--clr-muted)', opacity: 0.5 }} />
             ))}
+            <span style={{ fontSize: 11, color: 'var(--clr-muted)', fontFamily: "'SF Mono','Menlo',monospace" }}>
+              {elapsed < 1000 ? `${elapsed}ms` : `${(elapsed / 1000).toFixed(1)}s`}
+            </span>
           </div>
         )}
         <div ref={bottomRef} />
@@ -765,6 +800,68 @@ export default function App() {
     </div>
 
     <aside className="skills-sidebar" style={{ width: 280, flexShrink: 0, borderLeft: '1px solid var(--clr-border)', padding: 16, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {knowledgeFiles.length > 0 && (
+        <>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>Knowledge base</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {knowledgeFiles.map((f) => {
+              const isOpen = knowledgeOpen === f.file;
+              return (
+                <div key={f.file}>
+                  <button
+                    onClick={() => {
+                      if (isOpen) { setKnowledgeOpen(null); return; }
+                      setKnowledgeOpen(f.file);
+                      if (!knowledgeContent[f.file]) {
+                        authFetch(`/api/knowledge/${f.file}`)
+                          .then((r) => r.json())
+                          .then((d) => setKnowledgeContent((prev) => ({ ...prev, [f.file]: d.content })))
+                          .catch(() => setKnowledgeContent((prev) => ({ ...prev, [f.file]: 'Failed to load.' })));
+                      }
+                    }}
+                    style={{
+                      width: '100%',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '5px 8px',
+                      borderRadius: 8,
+                      border: '1px solid var(--clr-border)',
+                      background: 'var(--clr-surface)',
+                      fontSize: 12,
+                      color: 'var(--clr-text)',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                    }}
+                  >
+                    <span style={{ fontSize: 14 }}>📄</span>
+                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
+                    <span style={{ fontSize: 10, color: 'var(--clr-muted)' }}>{isOpen ? '▲' : '▼'}</span>
+                  </button>
+                  {isOpen && (
+                    <pre style={{
+                      margin: '4px 0 0',
+                      padding: '8px 10px',
+                      borderRadius: 8,
+                      border: '1px solid var(--clr-border)',
+                      background: 'var(--clr-bg)',
+                      fontSize: 11,
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
+                      maxHeight: 300,
+                      overflowY: 'auto',
+                      color: 'var(--clr-text)',
+                    }}>
+                      {knowledgeContent[f.file] ?? 'Loading…'}
+                    </pre>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ height: 1, background: 'var(--clr-border)', margin: '4px 0' }} />
+        </>
+      )}
       <div style={{ fontSize: 13, fontWeight: 600 }}>Saved skills</div>
       {skills.length === 0 ? (
         <p style={{ fontSize: 12, color: 'var(--clr-muted)' }}>

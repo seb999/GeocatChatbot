@@ -1,7 +1,7 @@
 import express from 'express';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { config } from './config.js';
 import { McpSession } from './mcp/client.js';
 import { isWriteTool } from './mcp/writeTools.js';
@@ -105,6 +105,32 @@ app.delete('/api/skills/:id', requireAuth, (req: AuthedRequest, res) => {
   const ok = deleteSkill(req.user!.uid, String(req.params.id));
   if (!ok) return res.status(404).json({ error: 'Skill not found.' });
   res.status(204).end();
+});
+
+const knowledgeDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'knowledge');
+app.get('/api/knowledge', requireAuth, (_req, res) => {
+  try {
+    const files = readdirSync(knowledgeDir)
+      .filter((f) => f.endsWith('.md'))
+      .sort()
+      .map((f) => ({ name: f.replace(/\.md$/, ''), file: f }));
+    res.json({ files });
+  } catch {
+    res.json({ files: [] });
+  }
+});
+
+app.get('/api/knowledge/:file', requireAuth, (req, res) => {
+  const file = String(req.params.file);
+  if (!file.endsWith('.md') || file.includes('..') || file.includes('/')) {
+    return res.status(400).json({ error: 'Invalid filename.' });
+  }
+  try {
+    const content = readFileSync(join(knowledgeDir, file), 'utf-8');
+    res.json({ file, content });
+  } catch {
+    res.status(404).json({ error: 'File not found.' });
+  }
 });
 
 app.get('/api/prompts', requireAuth, (req: AuthedRequest, res) => {
